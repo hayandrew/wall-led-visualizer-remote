@@ -6,7 +6,6 @@
 #include "controls_manager.h"
 #include "display_manager.h"
 #include "diyhue_manager.h"
-#include "ble_manager.h"
 
 static bool waitAndCheckBypass(int ms) {
   int steps = ms / 50;
@@ -177,10 +176,6 @@ void setup() {
   // Initialize diyHue Network Client
   DisplayManager::drawBootStatus("Initializing...", "diyHue Server");
   DiyHueManager::init();
-
-  // Initialize BLE Client Connection
-  DisplayManager::drawBootStatus("Initializing...", "BLE Client");
-  BLEManager::init();
 
   DisplayManager::drawBootStatus("Boot Complete");
   delay(500);

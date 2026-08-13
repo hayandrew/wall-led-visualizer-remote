@@ -159,7 +159,48 @@ void init() {
     server.on("/state", HTTP_PUT, handlePutState);
     server.on("/state", HTTP_POST, handlePutState);
 
+    // Remote Notification Endpoint
+    server.on("/api/notification", HTTP_POST, []() {
+        String body = server.arg("plain");
+        DynamicJsonDocument doc(512);
+        DeserializationError error = deserializeJson(doc, body);
+        
+        if (error) {
+            server.send(400, "text/plain", "Invalid JSON body");
+            Serial.printf("[Notification] JSON parse error: %s\n", error.c_str());
+            return;
+        }
 
+        Serial.printf("[Notification] Received update from wall visualizer: %s\n", body.c_str());
+
+        if (doc.containsKey("source")) {
+            String src = doc["source"];
+            if (src == "Sound") {
+                LEDManager::setSource(SOURCE_SOUND);
+            } else if (src == "WiFi") {
+                LEDManager::setSource(SOURCE_WIFI);
+            }
+        }
+        if (doc.containsKey("mode")) {
+            int m = doc["mode"];
+            LEDManager::setMode((VisualizerMode)m);
+        }
+        if (doc.containsKey("brightness")) {
+            uint8_t b = doc["brightness"];
+            LEDManager::setBrightness(b);
+        }
+        if (doc.containsKey("gain")) {
+            float g = doc["gain"];
+            ControlsManager::setGain(g);
+        }
+        if (doc.containsKey("autoCycle")) {
+            bool ac = doc["autoCycle"];
+            LEDManager::setAutoCycle(ac);
+        }
+
+        server.send(200, "application/json", "{\"status\":\"success\"}");
+        Serial.println("[Notification] Local state updated.");
+    });
     
     server.onNotFound([]() {
         server.send(404, "text/plain", "Not Found");

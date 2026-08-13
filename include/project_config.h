@@ -32,9 +32,4 @@
 #define OLED_SDA_PIN    0
 #define OLED_SCL_PIN    1
 
-// BLE Configuration
-#define BLE_SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define BLE_CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-#define BLE_DEVICE_NAME         "ESP32C3-Visualizer-Panel"
-
 #endif // CONFIG_H
