@@ -30,6 +30,15 @@ namespace ControlsManager {
     uint8_t getBrightnessPreview();
     float getGainPreview();
     bool getAutoCyclePreview();
+
+    // Check if any physical user interaction was detected (clears after reading)
+    bool hasActivity();
+
+    // Configure the GPIO wakeup sources (CLK, DT, SW) for low-power sleep
+    void prepareForSleep();
+
+    // Handle post-wakeup filter initialization
+    void handleWakeup();
 }
 
 #endif // CONTROLS_MANAGER_H

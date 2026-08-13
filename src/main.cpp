@@ -1,12 +1,82 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <ArduinoOTA.h>
+#include <FastLED.h>
+#include <esp_sleep.h>
+#include "driver/i2s.h"
 #include "project_config.h"
 #include "led_manager.h"
 #include "audio_processor.h"
 #include "controls_manager.h"
 #include "display_manager.h"
 #include "diyhue_manager.h"
+
+static uint32_t lastActivityTime = 0;
+
+void goToSleep() {
+  Serial.println("[Power] Checking if safe to enter light sleep...");
+  
+  // Make sure pins are in idle (HIGH) state before entering sleep.
+  // If any pin is LOW, the level-triggered wakeup will immediately wake the CPU.
+  if (digitalRead(ENCODER_CLK_PIN) == LOW || 
+      digitalRead(ENCODER_DT_PIN) == LOW || 
+      digitalRead(ENCODER_SW_PIN) == LOW) {
+    Serial.println("[Power] Pins active, delaying sleep.");
+    lastActivityTime = millis(); // reset timer to try again later
+    return;
+  }
+
+  Serial.println("[Power] Entering Light Sleep mode...");
+  
+  // 1. Turn off display
+  DisplayManager::turnOff();
+
+  // 2. Clear/Turn off LEDs
+  FastLED.clear();
+  FastLED.show();
+
+  // 3. Stop I2S
+  i2s_stop(I2S_NUM_0);
+
+  // 4. Power down Wi-Fi
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+
+  // 5. Configure GPIO Wakeup
+  ControlsManager::prepareForSleep();
+
+  // 6. Enter light sleep
+  esp_light_sleep_start();
+
+  // --- CPU is suspended here ---
+
+  // --- CPU wakes up here ---
+  Serial.println("[Power] Woke up from Light Sleep!");
+
+  // 7. Restart I2S
+  i2s_start(I2S_NUM_0);
+
+  // 8. Reconnect Wi-Fi (asynchronously)
+  WiFi.mode(WIFI_STA);
+  IPAddress local_IP(192, 168, 68, 50);
+  IPAddress gateway(192, 168, 68, 1);
+  IPAddress subnet(255, 255, 255, 0);
+  IPAddress primaryDNS(8, 8, 8, 8);
+  IPAddress secondaryDNS(8, 8, 4, 4);
+  WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS);
+  #if defined(WIFI_SSID) && defined(WIFI_PASS)
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+  #endif
+
+  // 9. Turn on display
+  DisplayManager::turnOn();
+
+  // 10. Filter out the waking inputs
+  ControlsManager::handleWakeup();
+
+  // 11. Reset inactivity timer
+  lastActivityTime = millis();
+}
 
 void setup() {
   // Initialize Serial logging
@@ -109,6 +179,7 @@ void setup() {
   DiyHueManager::init();
 
   Serial.println("=== Setup Complete. Entering loop ===\n");
+  lastActivityTime = millis();
 }
 
 void loop() {
@@ -119,11 +190,17 @@ void loop() {
   ControlsManager::update();
   DisplayManager::update();
 
+  // Reset inactivity timer if physical interaction occurs
+  if (ControlsManager::hasActivity()) {
+    lastActivityTime = millis();
+  }
+
   // Update diyHue client and handle automatic mode switching on command
   DiyHueManager::update();
   if (DiyHueManager::hasNewCommand()) {
       DiyHueManager::clearNewCommand();
       LEDManager::setSource(SOURCE_WIFI);
+      lastActivityTime = millis();
   }
 
   // 1. Run FFT calculation if background I2S buffer is filled
@@ -140,6 +217,7 @@ void loop() {
   if (currentMode != lastActiveMode) {
     lastActiveMode = currentMode;
     lastModeSwitch = millis();
+    lastActivityTime = millis();
   }
 
   if (LEDManager::getSource() == SOURCE_SOUND && LEDManager::getAutoCycle() && (millis() - lastModeSwitch >= 5000)) {
@@ -149,6 +227,7 @@ void loop() {
 
   // 3. Handle Serial commands to switch modes manually (if source is Sound)
   if (Serial.available()) {
+    lastActivityTime = millis();
     char c = Serial.read();
     if ((c == 'n' || c == ' ') && LEDManager::getSource() == SOURCE_SOUND) {
       LEDManager::nextMode();
@@ -170,6 +249,11 @@ void loop() {
                   AudioProcessor::getPeakAmplitude(), 
                   AudioProcessor::getVolumeEnvelope(),
                   LEDManager::getModeName(LEDManager::getActiveMode()));
+  }
+
+  // 5. Inactivity Sleep Check (30 seconds)
+  if (millis() - lastActivityTime > 30000) {
+    goToSleep();
   }
 
   // Yield to keep the Wi-Fi/IP stack healthy

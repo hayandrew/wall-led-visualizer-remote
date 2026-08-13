@@ -15,6 +15,12 @@ namespace DisplayManager {
 
     // Draw OTA error message
     void drawOtaError(const char* errorMsg);
+
+    // Turn the display panel off (low power state)
+    void turnOff();
+
+    // Turn the display panel on
+    void turnOn();
 }
 
 #endif // DISPLAY_MANAGER_H

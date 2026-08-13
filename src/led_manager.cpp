@@ -5,7 +5,7 @@
 CRGB leds[NUM_LEDS];
 static SourceMode currentSource = SOURCE_SOUND;
 static VisualizerMode currentMode = MODE_RAINBOW_WAVE;
-static bool autoCycleEnabled = true;
+static bool autoCycleEnabled = false;
 
 // Serpentine Index Mapping
 uint16_t getLEDIndex(uint8_t x, uint8_t y) {

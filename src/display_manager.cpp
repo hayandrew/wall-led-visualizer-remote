@@ -232,4 +232,12 @@ namespace DisplayManager {
         drawCenteredText("Rebooting...", 44, 1);
         display.display();
     }
+
+    void turnOff() {
+        display.ssd1306_command(SSD1306_DISPLAYOFF);
+    }
+
+    void turnOn() {
+        display.ssd1306_command(SSD1306_DISPLAYON);
+    }
 }

@@ -6,9 +6,16 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <esp_sleep.h>
+#include <driver/gpio.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
 
 namespace ControlsManager {
     ControlState currentState = STATE_NAV;
+    static bool activityDetected = false;
+    static bool justWokeUp = false;
     int menuCursor = 0;
     // State machine states
     #define R_START 0x0
@@ -55,36 +62,72 @@ namespace ControlsManager {
     static float selectedGainPreview = 1.0f;
     static bool selectedAutoCyclePreview = false;
 
+    // Struct to hold sync payload
+    struct SyncSettings {
+        SourceMode source;
+        VisualizerMode mode;
+        uint8_t brightness;
+        float gain;
+        bool autoCycle;
+    };
+
+    static QueueHandle_t syncQueue = NULL;
+    static TaskHandle_t syncTaskHandle = NULL;
+
+    void syncTask(void* parameter) {
+        SyncSettings settings;
+        while (true) {
+            if (xQueueReceive(syncQueue, &settings, portMAX_DELAY) == pdTRUE) {
+                if (WiFi.status() == WL_CONNECTED) {
+                    HTTPClient http;
+                    http.begin("http://192.168.68.55/api/settings");
+                    http.addHeader("Content-Type", "application/json");
+                    http.setTimeout(2000); // 2-second timeout in background
+
+                    StaticJsonDocument<256> doc;
+                    doc["source"] = LEDManager::getSourceName(settings.source);
+                    doc["mode"] = (int)settings.mode;
+                    doc["brightness"] = settings.brightness;
+                    doc["gain"] = settings.gain;
+                    doc["autoCycle"] = settings.autoCycle;
+
+                    String payload;
+                    serializeJson(doc, payload);
+
+                    Serial.printf("[Remote Task] Syncing to wall visualizer: %s\n", payload.c_str());
+
+                    int httpCode = http.POST(payload);
+                    if (httpCode > 0) {
+                        Serial.printf("[Remote Task] HTTP POST response: %d\n", httpCode);
+                    } else {
+                        Serial.printf("[Remote Task] HTTP POST failed: %s\n", http.errorToString(httpCode).c_str());
+                    }
+                    http.end();
+                } else {
+                    Serial.println("[Remote Task] WiFi not connected, skipping sync.");
+                }
+            }
+        }
+    }
+
     void syncSettingsToRemote() {
-        if (WiFi.status() != WL_CONNECTED) {
-            Serial.println("[Remote] WiFi not connected, skipping sync.");
+        if (syncQueue == NULL) {
+            Serial.println("[Remote] syncQueue is NULL, cannot sync settings.");
             return;
         }
 
-        HTTPClient http;
-        http.begin("http://192.168.68.55/api/settings");
-        http.addHeader("Content-Type", "application/json");
-        http.setTimeout(1000); // 1-second timeout to keep physical loop running fast
+        SyncSettings settings;
+        settings.source = LEDManager::getSource();
+        settings.mode = LEDManager::getActiveMode();
+        settings.brightness = LEDManager::getBrightness();
+        settings.gain = AudioProcessor::getGain();
+        settings.autoCycle = LEDManager::getAutoCycle();
 
-        StaticJsonDocument<256> doc;
-        doc["source"] = LEDManager::getSourceName(LEDManager::getSource());
-        doc["mode"] = (int)LEDManager::getActiveMode();
-        doc["brightness"] = LEDManager::getBrightness();
-        doc["gain"] = AudioProcessor::getGain();
-        doc["autoCycle"] = LEDManager::getAutoCycle();
-
-        String payload;
-        serializeJson(doc, payload);
-
-        Serial.printf("[Remote] Syncing to wall visualizer: %s\n", payload.c_str());
-
-        int httpCode = http.POST(payload);
-        if (httpCode > 0) {
-            Serial.printf("[Remote] HTTP POST response: %d\n", httpCode);
+        if (xQueueOverwrite(syncQueue, &settings) != pdTRUE) {
+            Serial.println("[Remote] Failed to write settings to syncQueue.");
         } else {
-            Serial.printf("[Remote] HTTP POST failed: %s\n", http.errorToString(httpCode).c_str());
+            Serial.println("[Remote] Queued async settings sync.");
         }
-        http.end();
     }
 
     void IRAM_ATTR handleEncoderISR() {
@@ -111,6 +154,23 @@ namespace ControlsManager {
 
         // Initialize starting state
         encoderState = R_START;
+
+        // Create FreeRTOS Queue for settings sync
+        syncQueue = xQueueCreate(1, sizeof(SyncSettings));
+        if (syncQueue != NULL) {
+            // Create background task for syncing settings asynchronously
+            xTaskCreatePinnedToCore(
+                syncTask,
+                "SyncSettingsTask",
+                4096,
+                NULL,
+                1,              // Low priority so it doesn't interfere with UI or Audio
+                &syncTaskHandle,
+                0               // Pinned to core 0
+            );
+        } else {
+            Serial.println("[Remote] Error creating sync settings queue!");
+        }
 
         // Attach CHANGE interrupts to BOTH CLK and DT for full quadrature tracking
         attachInterrupt(digitalPinToInterrupt(ENCODER_CLK_PIN), handleEncoderISR, CHANGE);
@@ -139,6 +199,24 @@ namespace ControlsManager {
                 }
                 lastSwState = currentSwState;
                 lastSwDebounceTime = millis();
+            }
+        }
+
+        // Track user interaction activity
+        if (delta != 0 || swClicked) {
+            activityDetected = true;
+        }
+
+        // Filter out initial wakeup inputs
+        if (justWokeUp) {
+            delta = 0;
+            swClicked = false;
+
+            if (digitalRead(ENCODER_CLK_PIN) == HIGH && 
+                digitalRead(ENCODER_DT_PIN) == HIGH && 
+                digitalRead(ENCODER_SW_PIN) == HIGH) {
+                justWokeUp = false;
+                Serial.println("[Controls] Physical controls idle, clearing justWokeUp flag.");
             }
         }
 
@@ -360,5 +438,23 @@ namespace ControlsManager {
             Serial.printf("[Remote] Failed to fetch status, HTTP code: %d\n", httpCode);
         }
         http.end();
+    }
+
+    bool hasActivity() {
+        bool active = activityDetected;
+        activityDetected = false;
+        return active;
+    }
+
+    void prepareForSleep() {
+        // Enable GPIO wakeup for CLK, DT, SW pins on LOW level
+        gpio_wakeup_enable((gpio_num_t)ENCODER_CLK_PIN, GPIO_INTR_LOW_LEVEL);
+        gpio_wakeup_enable((gpio_num_t)ENCODER_DT_PIN, GPIO_INTR_LOW_LEVEL);
+        gpio_wakeup_enable((gpio_num_t)ENCODER_SW_PIN, GPIO_INTR_LOW_LEVEL);
+        esp_sleep_enable_gpio_wakeup();
+    }
+
+    void handleWakeup() {
+        justWokeUp = true;
     }
 }
