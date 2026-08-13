@@ -5,7 +5,6 @@
 #include "controls_manager.h"
 #include "project_config.h"
 #include "led_manager.h"
-#include "audio_processor.h"
 #include <cmath>
 
 #define SCREEN_WIDTH 128
@@ -16,9 +15,6 @@
 static Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 namespace DisplayManager {
-    // Scrolling diagnostics buffer
-    static float history[128] = {0.0f};
-    static int historyIndex = 0;
 
     // Centered text drawing helper
     void drawCenteredText(const char* text, int y, int size) {
@@ -27,7 +23,7 @@ namespace DisplayManager {
         int x = (128 - (len * charWidth)) / 2;
         if (x < 0) x = 0;
         display.setTextSize(size);
-        display.setCursor(x, y);
+        display.setCursor(x, y + 10);
         display.print(text);
     }
 
@@ -69,11 +65,7 @@ namespace DisplayManager {
         if (millis() - lastDraw < 33) return;
         lastDraw = millis();
 
-        // 1. Update the scrolling volume history buffer
-        history[historyIndex] = AudioProcessor::getVolumeEnvelope();
-        historyIndex = (historyIndex + 1) % 128;
-
-        // 2. Clear buffers and start drawing
+        // Clear buffers and start drawing
         display.clearDisplay();
 
         // Fetch active settings and controls state
@@ -83,26 +75,26 @@ namespace DisplayManager {
         // Header Title (Current Menu Item)
         display.setTextColor(SSD1306_WHITE);
         switch (cursor) {
-            case 0: drawCenteredText("Visualizer Mode", 0, 1); break;
-            case 1: drawCenteredText("Source Select", 0, 1); break;
-            case 2: drawCenteredText("LED Brightness", 0, 1); break;
-            case 3: drawCenteredText("Microphone Gain", 0, 1); break;
-            case 4: drawCenteredText("Auto-Cycling", 0, 1); break;
+            case 0: drawCenteredText("Visualizer Mode", 0 + 10, 1); break;
+            case 1: drawCenteredText("Source Select", 0 + 10, 1); break;
+            case 2: drawCenteredText("LED Brightness", 0 + 10, 1); break;
+            case 3: drawCenteredText("Microphone Gain", 0 + 10, 1); break;
+            case 4: drawCenteredText("Auto-Cycling", 0 + 10, 1); break;
         }
-        display.drawFastHLine(0, 9, 128, SSD1306_WHITE);
+        display.drawFastHLine(0, 9 + 20, 128, SSD1306_WHITE);
 
         // Render Focused Parameter Value or Progress Bar
         if (cursor == 0) {
-            drawCenteredText(getShortModeName(ControlsManager::getVisualizerModePreview()), 26, 2);
+            drawCenteredText(getShortModeName(ControlsManager::getVisualizerModePreview()), 26 + 10, 2);
             if (editing) {
-                display.fillTriangle(4, 29, 4, 39, 10, 34, SSD1306_WHITE);
-                display.fillTriangle(124, 29, 124, 39, 118, 34, SSD1306_WHITE);
+                display.fillTriangle(4, 29 + 20, 4, 39 + 20, 10, 34 + 20, SSD1306_WHITE);
+                display.fillTriangle(124, 29 + 20, 124, 39 + 20, 118, 34 + 20, SSD1306_WHITE);
             }
         } else if (cursor == 1) {
-            drawCenteredText(LEDManager::getSourceName(ControlsManager::getSourcePreview()), 26, 2);
+            drawCenteredText(LEDManager::getSourceName(ControlsManager::getSourcePreview()), 26 + 10, 2);
             if (editing) {
-                display.fillTriangle(4, 29, 4, 39, 10, 34, SSD1306_WHITE);
-                display.fillTriangle(124, 29, 124, 39, 118, 34, SSD1306_WHITE);
+                display.fillTriangle(4, 29 + 20, 4, 39 + 20, 10, 34 + 20, SSD1306_WHITE);
+                display.fillTriangle(124, 29 + 20, 124, 39 + 20, 118, 34 + 20, SSD1306_WHITE);
             }
         } else if (cursor == 2) {
             int pct = (int)round((ControlsManager::getBrightnessPreview() * 100.0) / 255.0);
@@ -112,20 +104,20 @@ namespace DisplayManager {
                 if (fillWidth > 80) fillWidth = 80;
                 if (fillWidth < 0) fillWidth = 0;
                 
-                display.drawRect(8, 28, 80, 12, SSD1306_WHITE);
-                display.fillRect(8, 28, fillWidth, 12, SSD1306_WHITE);
+                display.drawRect(8, 28 + 20, 80, 12, SSD1306_WHITE);
+                display.fillRect(8, 28 + 20, fillWidth, 12, SSD1306_WHITE);
                 
                 char buf[8];
                 sprintf(buf, "%d%%", pct);
                 int tx = 112 - (strlen(buf) * 3); // Center of right-hand column (x=96 to 127)
                 display.setTextColor(SSD1306_WHITE);
                 display.setTextSize(1);
-                display.setCursor(tx, 30);
+                display.setCursor(tx, 30 + 20);
                 display.print(buf);
             } else {
                 char buf[8];
                 sprintf(buf, "%d%%", pct);
-                drawCenteredText(buf, 26, 2);
+                drawCenteredText(buf, 26 + 10, 2);
             }
         } else if (cursor == 3) {
             float g = ControlsManager::getGainPreview();
@@ -136,49 +128,28 @@ namespace DisplayManager {
                 if (fillWidth > 80) fillWidth = 80;
                 if (fillWidth < 0) fillWidth = 0;
                 
-                display.drawRect(8, 28, 80, 12, SSD1306_WHITE);
-                display.fillRect(8, 28, fillWidth, 12, SSD1306_WHITE);
+                display.drawRect(8, 28 + 20, 80, 12, SSD1306_WHITE);
+                display.fillRect(8, 28 + 20, fillWidth, 12, SSD1306_WHITE);
                 
                 char buf[8];
                 sprintf(buf, "%.1fx", g);
                 int tx = 112 - (strlen(buf) * 3); // Center of right-hand column (x=96 to 127)
                 display.setTextColor(SSD1306_WHITE);
                 display.setTextSize(1);
-                display.setCursor(tx, 30);
+                display.setCursor(tx, 30 + 20);
                 display.print(buf);
             } else {
                 char buf[8];
                 sprintf(buf, "%.1fx", g);
-                drawCenteredText(buf, 26, 2);
+                drawCenteredText(buf, 26 + 10, 2);
             }
         } else if (cursor == 4) {
             bool ac = ControlsManager::getAutoCyclePreview();
-            drawCenteredText(ac ? "ON" : "OFF", 26, 2);
+            drawCenteredText(ac ? "ON" : "OFF", 26 + 10, 2);
             if (editing) {
-                display.fillTriangle(4, 29, 4, 39, 10, 34, SSD1306_WHITE);
-                display.fillTriangle(124, 29, 124, 39, 118, 34, SSD1306_WHITE);
+                display.fillTriangle(4, 29 + 20, 4, 39 + 20, 10, 34 + 20, SSD1306_WHITE);
+                display.fillTriangle(124, 29 + 20, 124, 39 + 20, 118, 34 + 20, SSD1306_WHITE);
             }
-        }
-
-        // Draw Divider Line for diagnostics window
-        display.drawFastHLine(0, 49, 128, SSD1306_WHITE);
-
-        // Render Scrolling Diagnostics Waveform
-        float maxVal = 100.0f; // Minimal floor to prevent tiny noise from auto-maximizing
-        for (int j = 0; j < 128; j++) {
-            if (history[j] > maxVal) maxVal = history[j];
-        }
-
-        for (int x = 0; x < 128; x++) {
-            int idx = (historyIndex + x) % 128;
-            float val = history[idx];
-            
-            // Map value into a 12px height container (bottom y-rows 51 to 63)
-            int barHeight = (int)((val / maxVal) * 11.0f);
-            if (barHeight > 11) barHeight = 11;
-            
-            // Draw a vertical line from the bottom (63) upward
-            display.drawFastVLine(x, 63 - barHeight, barHeight + 1, SSD1306_WHITE);
         }
 
         // Render the buffer to the physical screen
@@ -197,16 +168,16 @@ namespace DisplayManager {
 
         // Header Title
         drawCenteredText("OTA UPDATE", 0, 1);
-        display.drawFastHLine(0, 9, 128, SSD1306_WHITE);
+        display.drawFastHLine(0, 9 + 10, 128, SSD1306_WHITE);
 
         // Main info text
         drawCenteredText("Downloading...", 15, 1);
 
         // Draw progress bar border (100px wide, centered: x=14 to 114)
-        display.drawRect(14, 28, 100, 10, SSD1306_WHITE);
+        display.drawRect(14, 28 + 10, 100, 10, SSD1306_WHITE);
         // Draw progress bar fill
         int fillWidth = percent;
-        display.fillRect(14, 28, fillWidth, 10, SSD1306_WHITE);
+        display.fillRect(14, 28 + 10, fillWidth, 10, SSD1306_WHITE);
 
         // Draw percentage text
         char buf[16];
@@ -227,17 +198,22 @@ namespace DisplayManager {
         display.clearDisplay();
         display.setTextColor(SSD1306_WHITE);
         drawCenteredText("OTA ERROR", 0, 1);
-        display.drawFastHLine(0, 9, 128, SSD1306_WHITE);
+        display.drawFastHLine(0, 9 + 10, 128, SSD1306_WHITE);
         drawCenteredText(errorMsg, 24, 1);
         drawCenteredText("Rebooting...", 44, 1);
         display.display();
     }
 
-    void turnOff() {
-        display.ssd1306_command(SSD1306_DISPLAYOFF);
-    }
-
-    void turnOn() {
-        display.ssd1306_command(SSD1306_DISPLAYON);
+    void drawBootStatus(const char* status, const char* details) {
+        display.clearDisplay();
+        display.setTextColor(SSD1306_WHITE);
+        drawCenteredText("SYSTEM BOOT", 4, 1);
+        display.drawFastHLine(0, 14 + 10, 128, SSD1306_WHITE);
+        
+        drawCenteredText(status, 28, 1);
+        if (details != nullptr) {
+            drawCenteredText(details, 44, 1);
+        }
+        display.display();
     }
 }

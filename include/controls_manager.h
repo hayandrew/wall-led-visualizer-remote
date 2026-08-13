@@ -17,7 +17,7 @@ namespace ControlsManager {
     void update();
 
     // Fetch the initial state from the remote ESP32-S3 and update local parameters
-    void fetchStateFromRemote();
+    bool fetchStateFromRemote();
 
     // Accessors for UI rendering
     ControlState getState();
@@ -31,14 +31,8 @@ namespace ControlsManager {
     float getGainPreview();
     bool getAutoCyclePreview();
 
-    // Check if any physical user interaction was detected (clears after reading)
-    bool hasActivity();
-
-    // Configure the GPIO wakeup sources (CLK, DT, SW) for low-power sleep
-    void prepareForSleep();
-
-    // Handle post-wakeup filter initialization
-    void handleWakeup();
+    // Set local gain for settings synchronization
+    void setGain(float gain);
 }
 
 #endif // CONTROLS_MANAGER_H

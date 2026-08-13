@@ -1,21 +1,16 @@
 #include "controls_manager.h"
 #include "project_config.h"
 #include "led_manager.h"
-#include "audio_processor.h"
 #include <cmath>
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
-#include <esp_sleep.h>
-#include <driver/gpio.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
 
 namespace ControlsManager {
     ControlState currentState = STATE_NAV;
-    static bool activityDetected = false;
-    static bool justWokeUp = false;
     int menuCursor = 0;
     // State machine states
     #define R_START 0x0
@@ -54,6 +49,9 @@ namespace ControlsManager {
     // State variables for non-blocking HTTP sync
     static bool remoteUpdatePending = false;
     static uint32_t lastInteractionTime = 0;
+
+    // Active gain setting stored locally to preserve HTTP payload structure
+    static float activeGain = 1.0f;
 
     // Preview variables to defer selection changes until confirmed
     static VisualizerMode selectedModePreview = MODE_WHITE_WAVEFORM;
@@ -120,7 +118,7 @@ namespace ControlsManager {
         settings.source = LEDManager::getSource();
         settings.mode = LEDManager::getActiveMode();
         settings.brightness = LEDManager::getBrightness();
-        settings.gain = AudioProcessor::getGain();
+        settings.gain = activeGain;
         settings.autoCycle = LEDManager::getAutoCycle();
 
         if (xQueueOverwrite(syncQueue, &settings) != pdTRUE) {
@@ -185,6 +183,14 @@ namespace ControlsManager {
         rawEncoderDelta = 0;
         interrupts();
 
+        // Recover from missed interrupts (e.g., during FastLED.show() disabling interrupts)
+        // by resetting the state machine to R_START when physical controls are at detent (both HIGH)
+        if (digitalRead(ENCODER_CLK_PIN) == HIGH && digitalRead(ENCODER_DT_PIN) == HIGH) {
+            noInterrupts();
+            encoderState = R_START;
+            interrupts();
+        }
+
         // 2. Read SW switch press with debouncing
         static bool lastSwState = HIGH;
         static uint32_t lastSwDebounceTime = 0;
@@ -199,24 +205,6 @@ namespace ControlsManager {
                 }
                 lastSwState = currentSwState;
                 lastSwDebounceTime = millis();
-            }
-        }
-
-        // Track user interaction activity
-        if (delta != 0 || swClicked) {
-            activityDetected = true;
-        }
-
-        // Filter out initial wakeup inputs
-        if (justWokeUp) {
-            delta = 0;
-            swClicked = false;
-
-            if (digitalRead(ENCODER_CLK_PIN) == HIGH && 
-                digitalRead(ENCODER_DT_PIN) == HIGH && 
-                digitalRead(ENCODER_SW_PIN) == HIGH) {
-                justWokeUp = false;
-                Serial.println("[Controls] Physical controls idle, clearing justWokeUp flag.");
             }
         }
 
@@ -250,7 +238,7 @@ namespace ControlsManager {
                     case 0: selectedModePreview = LEDManager::getActiveMode(); break;
                     case 1: selectedSourcePreview = LEDManager::getSource(); break;
                     case 2: selectedBrightnessPreview = LEDManager::getBrightness(); break;
-                    case 3: selectedGainPreview = AudioProcessor::getGain(); break;
+                    case 3: selectedGainPreview = activeGain; break;
                     case 4: selectedAutoCyclePreview = LEDManager::getAutoCycle(); break;
                 }
             }
@@ -320,7 +308,7 @@ namespace ControlsManager {
                         LEDManager::setBrightness(selectedBrightnessPreview);
                         break;
                     case 3:
-                        AudioProcessor::setGain(selectedGainPreview);
+                        activeGain = selectedGainPreview;
                         break;
                     case 4:
                         LEDManager::setAutoCycle(selectedAutoCyclePreview);
@@ -377,7 +365,7 @@ namespace ControlsManager {
         if (currentState == STATE_EDIT && menuCursor == 3) {
             return selectedGainPreview;
         }
-        return AudioProcessor::getGain();
+        return activeGain;
     }
 
     bool getAutoCyclePreview() {
@@ -387,10 +375,10 @@ namespace ControlsManager {
         return LEDManager::getAutoCycle();
     }
 
-    void fetchStateFromRemote() {
+    bool fetchStateFromRemote() {
         if (WiFi.status() != WL_CONNECTED) {
             Serial.println("[Remote] WiFi not connected, cannot fetch state.");
-            return;
+            return false;
         }
 
         Serial.println("[Remote] Fetching initial state from wall visualizer...");
@@ -398,6 +386,7 @@ namespace ControlsManager {
         http.begin("http://192.168.68.55/api/status");
         http.setTimeout(2000); // 2-second timeout
 
+        bool success = false;
         int httpCode = http.GET();
         if (httpCode == HTTP_CODE_OK) {
             String payload = http.getString();
@@ -423,14 +412,14 @@ namespace ControlsManager {
                     LEDManager::setBrightness(b);
                 }
                 if (doc.containsKey("gain")) {
-                    float g = doc["gain"];
-                    AudioProcessor::setGain(g);
+                    activeGain = doc["gain"];
                 }
                 if (doc.containsKey("autoCycle")) {
                     bool ac = doc["autoCycle"];
                     LEDManager::setAutoCycle(ac);
                 }
                 Serial.println("[Remote] Initial state fetched and applied successfully.");
+                success = true;
             } else {
                 Serial.printf("[Remote] Failed to parse status JSON: %s\n", error.c_str());
             }
@@ -438,23 +427,10 @@ namespace ControlsManager {
             Serial.printf("[Remote] Failed to fetch status, HTTP code: %d\n", httpCode);
         }
         http.end();
+        return success;
     }
 
-    bool hasActivity() {
-        bool active = activityDetected;
-        activityDetected = false;
-        return active;
-    }
-
-    void prepareForSleep() {
-        // Enable GPIO wakeup for CLK, DT, SW pins on LOW level
-        gpio_wakeup_enable((gpio_num_t)ENCODER_CLK_PIN, GPIO_INTR_LOW_LEVEL);
-        gpio_wakeup_enable((gpio_num_t)ENCODER_DT_PIN, GPIO_INTR_LOW_LEVEL);
-        gpio_wakeup_enable((gpio_num_t)ENCODER_SW_PIN, GPIO_INTR_LOW_LEVEL);
-        esp_sleep_enable_gpio_wakeup();
-    }
-
-    void handleWakeup() {
-        justWokeUp = true;
+    void setGain(float gain) {
+        activeGain = gain;
     }
 }

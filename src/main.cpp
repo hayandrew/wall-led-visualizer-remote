@@ -1,81 +1,21 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <ArduinoOTA.h>
-#include <FastLED.h>
-#include <esp_sleep.h>
-#include "driver/i2s.h"
 #include "project_config.h"
 #include "led_manager.h"
-#include "audio_processor.h"
 #include "controls_manager.h"
 #include "display_manager.h"
 #include "diyhue_manager.h"
 
-static uint32_t lastActivityTime = 0;
-
-void goToSleep() {
-  Serial.println("[Power] Checking if safe to enter light sleep...");
-  
-  // Make sure pins are in idle (HIGH) state before entering sleep.
-  // If any pin is LOW, the level-triggered wakeup will immediately wake the CPU.
-  if (digitalRead(ENCODER_CLK_PIN) == LOW || 
-      digitalRead(ENCODER_DT_PIN) == LOW || 
-      digitalRead(ENCODER_SW_PIN) == LOW) {
-    Serial.println("[Power] Pins active, delaying sleep.");
-    lastActivityTime = millis(); // reset timer to try again later
-    return;
+static bool waitAndCheckBypass(int ms) {
+  int steps = ms / 50;
+  for (int i = 0; i < steps; i++) {
+    if (digitalRead(ENCODER_SW_PIN) == LOW) {
+      return true;
+    }
+    delay(50);
   }
-
-  Serial.println("[Power] Entering Light Sleep mode...");
-  
-  // 1. Turn off display
-  DisplayManager::turnOff();
-
-  // 2. Clear/Turn off LEDs
-  FastLED.clear();
-  FastLED.show();
-
-  // 3. Stop I2S
-  i2s_stop(I2S_NUM_0);
-
-  // 4. Power down Wi-Fi
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-
-  // 5. Configure GPIO Wakeup
-  ControlsManager::prepareForSleep();
-
-  // 6. Enter light sleep
-  esp_light_sleep_start();
-
-  // --- CPU is suspended here ---
-
-  // --- CPU wakes up here ---
-  Serial.println("[Power] Woke up from Light Sleep!");
-
-  // 7. Restart I2S
-  i2s_start(I2S_NUM_0);
-
-  // 8. Reconnect Wi-Fi (asynchronously)
-  WiFi.mode(WIFI_STA);
-  IPAddress local_IP(192, 168, 68, 50);
-  IPAddress gateway(192, 168, 68, 1);
-  IPAddress subnet(255, 255, 255, 0);
-  IPAddress primaryDNS(8, 8, 8, 8);
-  IPAddress secondaryDNS(8, 8, 4, 4);
-  WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS);
-  #if defined(WIFI_SSID) && defined(WIFI_PASS)
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-  #endif
-
-  // 9. Turn on display
-  DisplayManager::turnOn();
-
-  // 10. Filter out the waking inputs
-  ControlsManager::handleWakeup();
-
-  // 11. Reset inactivity timer
-  lastActivityTime = millis();
+  return false;
 }
 
 void setup() {
@@ -83,6 +23,10 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("\n=== ESP32-C3 LED Visualizer Starting ===");
+
+  // Initialize display first to show "Connecting..." during Wi-Fi setup
+  DisplayManager::init();
+  DisplayManager::drawBootStatus("Connecting...");
 
   // Configure static IP to speed up connection and match reference setup
   WiFi.mode(WIFI_STA);
@@ -96,28 +40,56 @@ void setup() {
     Serial.println("[WiFi] Static IP configuration failed!");
   }
 
+  // Initialize SW pin for bypass option
+  pinMode(ENCODER_SW_PIN, INPUT_PULLUP);
+
   // Connect to home Wi-Fi using preprocessor macros injected by load_env.py
   #if defined(WIFI_SSID) && defined(WIFI_PASS)
     Serial.printf("[WiFi] Connecting to SSID: %s...\n", WIFI_SSID);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
   #else
     #error "WIFI_SSID and WIFI_PASS must be defined in .env!"
   #endif
 
-  // Wait for connection with a timeout
+  bool bypassed = false;
   int retries = 0;
-  while (WiFi.status() != WL_CONNECTED && retries < 20) {
-    delay(500);
-    Serial.print(".");
-    retries++;
+  
+  while (WiFi.status() != WL_CONNECTED && !bypassed) {
+    if (retries > 0) {
+      Serial.println("\n[WiFi] Connection Failed. Retrying...");
+      DisplayManager::drawBootStatus("Connection Failed", "Retrying...");
+      if (waitAndCheckBypass(2000)) {
+        bypassed = true;
+        break;
+      }
+    }
+    
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    
+    // Wait for connection with a timeout of 10 seconds (5 checks * 2 seconds)
+    int check = 0;
+    while (WiFi.status() != WL_CONNECTED && check < 5) {
+      if (waitAndCheckBypass(2000)) {
+        bypassed = true;
+        break;
+      }
+      check++;
+      retries++;
+      char buf[64];
+      sprintf(buf, "Attempt %d (Click Knob to Skip)", retries);
+      DisplayManager::drawBootStatus("Connecting...", buf);
+    }
   }
   
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("\n[WiFi] Connected successfully!");
     Serial.print("[WiFi] IP Address: ");
     Serial.println(WiFi.localIP());
+    DisplayManager::drawBootStatus("WiFi Connected", WiFi.localIP().toString().c_str());
+    delay(1000);
   } else {
-    Serial.println("\n[WiFi] Connection failed! Operating offline.");
+    Serial.println("\n[WiFi] Operating offline.");
+    DisplayManager::drawBootStatus("Connection Skipped", "Operating Offline");
+    delay(1500);
   }
 
   // Set up OTA port (default is 3232, but standard is fine)
@@ -160,26 +132,55 @@ void setup() {
   ArduinoOTA.begin();
   Serial.println("[OTA] OTA Services Ready.");
 
-  // Initialize I2S Audio Processor
-  AudioProcessor::init();
+
 
   // Initialize LEDs via Manager
+  DisplayManager::drawBootStatus("Initializing...", "LED Manager");
   LEDManager::init();
 
-  // Initialize physical controls and display menu
+  // Initialize physical controls
+  DisplayManager::drawBootStatus("Initializing...", "Controls");
   ControlsManager::init();
-  DisplayManager::init();
 
-  // Synchronize remote settings on boot
+  // Synchronize settings with the main LED panel on boot
   if (WiFi.status() == WL_CONNECTED) {
-    ControlsManager::fetchStateFromRemote();
+    DisplayManager::drawBootStatus("Connecting to Panel", "Syncing Settings...");
+    
+    bool syncSuccess = false;
+    int syncAttempts = 0;
+    
+    while (!syncSuccess) {
+      syncAttempts++;
+      char detailBuf[64];
+      sprintf(detailBuf, "Attempt %d (Click to Skip)", syncAttempts);
+      DisplayManager::drawBootStatus("Connecting to Panel", detailBuf);
+      
+      syncSuccess = ControlsManager::fetchStateFromRemote();
+      
+      if (syncSuccess) {
+        DisplayManager::drawBootStatus("Panel Synced", "Settings Applied");
+        delay(1000);
+      } else {
+        Serial.println("[Remote] Panel sync failed. Retrying...");
+        DisplayManager::drawBootStatus("Sync Failed", "Retrying in 2s...");
+        if (waitAndCheckBypass(2000)) {
+          Serial.println("[Remote] Sync bypassed by user.");
+          DisplayManager::drawBootStatus("Sync Skipped", "Operating Offline");
+          delay(1000);
+          break;
+        }
+      }
+    }
   }
 
   // Initialize diyHue Network Client
+  DisplayManager::drawBootStatus("Initializing...", "diyHue Server");
   DiyHueManager::init();
 
+  DisplayManager::drawBootStatus("Boot Complete");
+  delay(500);
+
   Serial.println("=== Setup Complete. Entering loop ===\n");
-  lastActivityTime = millis();
 }
 
 void loop() {
@@ -190,24 +191,14 @@ void loop() {
   ControlsManager::update();
   DisplayManager::update();
 
-  // Reset inactivity timer if physical interaction occurs
-  if (ControlsManager::hasActivity()) {
-    lastActivityTime = millis();
-  }
-
   // Update diyHue client and handle automatic mode switching on command
   DiyHueManager::update();
   if (DiyHueManager::hasNewCommand()) {
       DiyHueManager::clearNewCommand();
       LEDManager::setSource(SOURCE_WIFI);
-      lastActivityTime = millis();
   }
 
-  // 1. Run FFT calculation if background I2S buffer is filled
-  if (AudioProcessor::isNewBufferReady()) {
-    AudioProcessor::runFFT();
-    AudioProcessor::clearNewBufferFlag();
-  }
+
 
   // 2. Auto-cycle visualizer modes every 5 seconds (if enabled and source is Sound)
   static unsigned long lastModeSwitch = millis();
@@ -217,7 +208,6 @@ void loop() {
   if (currentMode != lastActiveMode) {
     lastActiveMode = currentMode;
     lastModeSwitch = millis();
-    lastActivityTime = millis();
   }
 
   if (LEDManager::getSource() == SOURCE_SOUND && LEDManager::getAutoCycle() && (millis() - lastModeSwitch >= 5000)) {
@@ -227,7 +217,6 @@ void loop() {
 
   // 3. Handle Serial commands to switch modes manually (if source is Sound)
   if (Serial.available()) {
-    lastActivityTime = millis();
     char c = Serial.read();
     if ((c == 'n' || c == ' ') && LEDManager::getSource() == SOURCE_SOUND) {
       LEDManager::nextMode();
@@ -241,19 +230,12 @@ void loop() {
   // 4. Update the visualizer animation frame
   LEDManager::update();
 
-  // Print volume statistics to Serial Monitor every 500ms
+  // Print status to Serial Monitor every 500ms
   static unsigned long lastPrint = 0;
   if (millis() - lastPrint >= 500) {
     lastPrint = millis();
-    Serial.printf("[Audio] Peak: %.2f | Env: %.2f | Active Mode: %s\n", 
-                  AudioProcessor::getPeakAmplitude(), 
-                  AudioProcessor::getVolumeEnvelope(),
+    Serial.printf("[Status] Active Mode: %s\n", 
                   LEDManager::getModeName(LEDManager::getActiveMode()));
-  }
-
-  // 5. Inactivity Sleep Check (30 seconds)
-  if (millis() - lastActivityTime > 30000) {
-    goToSleep();
   }
 
   // Yield to keep the Wi-Fi/IP stack healthy

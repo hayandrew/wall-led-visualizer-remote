@@ -4,7 +4,7 @@
 #include <ArduinoJson.h>
 #include <FastLED.h>
 #include "led_manager.h"
-#include "audio_processor.h"
+#include "controls_manager.h"
 
 namespace DiyHueManager {
 
@@ -191,7 +191,7 @@ void init() {
         }
         if (doc.containsKey("gain")) {
             float g = doc["gain"];
-            AudioProcessor::setGain(g);
+            ControlsManager::setGain(g);
         }
         if (doc.containsKey("autoCycle")) {
             bool ac = doc["autoCycle"];
