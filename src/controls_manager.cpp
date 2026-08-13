@@ -1,6 +1,7 @@
 #include "controls_manager.h"
 #include "project_config.h"
 #include "led_manager.h"
+#include "ble_manager.h"
 #include <cmath>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -60,72 +61,14 @@ namespace ControlsManager {
     static float selectedGainPreview = 1.0f;
     static bool selectedAutoCyclePreview = false;
 
-    // Struct to hold sync payload
-    struct SyncSettings {
-        SourceMode source;
-        VisualizerMode mode;
-        uint8_t brightness;
-        float gain;
-        bool autoCycle;
-    };
-
-    static QueueHandle_t syncQueue = NULL;
-    static TaskHandle_t syncTaskHandle = NULL;
-
-    void syncTask(void* parameter) {
-        SyncSettings settings;
-        while (true) {
-            if (xQueueReceive(syncQueue, &settings, portMAX_DELAY) == pdTRUE) {
-                if (WiFi.status() == WL_CONNECTED) {
-                    HTTPClient http;
-                    http.begin("http://192.168.68.55/api/settings");
-                    http.addHeader("Content-Type", "application/json");
-                    http.setTimeout(2000); // 2-second timeout in background
-
-                    StaticJsonDocument<256> doc;
-                    doc["source"] = LEDManager::getSourceName(settings.source);
-                    doc["mode"] = (int)settings.mode;
-                    doc["brightness"] = settings.brightness;
-                    doc["gain"] = settings.gain;
-                    doc["autoCycle"] = settings.autoCycle;
-
-                    String payload;
-                    serializeJson(doc, payload);
-
-                    Serial.printf("[Remote Task] Syncing to wall visualizer: %s\n", payload.c_str());
-
-                    int httpCode = http.POST(payload);
-                    if (httpCode > 0) {
-                        Serial.printf("[Remote Task] HTTP POST response: %d\n", httpCode);
-                    } else {
-                        Serial.printf("[Remote Task] HTTP POST failed: %s\n", http.errorToString(httpCode).c_str());
-                    }
-                    http.end();
-                } else {
-                    Serial.println("[Remote Task] WiFi not connected, skipping sync.");
-                }
-            }
-        }
-    }
-
     void syncSettingsToRemote() {
-        if (syncQueue == NULL) {
-            Serial.println("[Remote] syncQueue is NULL, cannot sync settings.");
-            return;
-        }
-
-        SyncSettings settings;
-        settings.source = LEDManager::getSource();
-        settings.mode = LEDManager::getActiveMode();
-        settings.brightness = LEDManager::getBrightness();
-        settings.gain = activeGain;
-        settings.autoCycle = LEDManager::getAutoCycle();
-
-        if (xQueueOverwrite(syncQueue, &settings) != pdTRUE) {
-            Serial.println("[Remote] Failed to write settings to syncQueue.");
-        } else {
-            Serial.println("[Remote] Queued async settings sync.");
-        }
+        BLEManager::syncSettingsToPanel(
+            LEDManager::getSource(),
+            LEDManager::getActiveMode(),
+            LEDManager::getBrightness(),
+            activeGain,
+            LEDManager::getAutoCycle()
+        );
     }
 
     void IRAM_ATTR handleEncoderISR() {
@@ -153,22 +96,7 @@ namespace ControlsManager {
         // Initialize starting state
         encoderState = R_START;
 
-        // Create FreeRTOS Queue for settings sync
-        syncQueue = xQueueCreate(1, sizeof(SyncSettings));
-        if (syncQueue != NULL) {
-            // Create background task for syncing settings asynchronously
-            xTaskCreatePinnedToCore(
-                syncTask,
-                "SyncSettingsTask",
-                4096,
-                NULL,
-                1,              // Low priority so it doesn't interfere with UI or Audio
-                &syncTaskHandle,
-                0               // Pinned to core 0
-            );
-        } else {
-            Serial.println("[Remote] Error creating sync settings queue!");
-        }
+
 
         // Attach CHANGE interrupts to BOTH CLK and DT for full quadrature tracking
         attachInterrupt(digitalPinToInterrupt(ENCODER_CLK_PIN), handleEncoderISR, CHANGE);
@@ -376,58 +304,7 @@ namespace ControlsManager {
     }
 
     bool fetchStateFromRemote() {
-        if (WiFi.status() != WL_CONNECTED) {
-            Serial.println("[Remote] WiFi not connected, cannot fetch state.");
-            return false;
-        }
-
-        Serial.println("[Remote] Fetching initial state from wall visualizer...");
-        HTTPClient http;
-        http.begin("http://192.168.68.55/api/status");
-        http.setTimeout(2000); // 2-second timeout
-
-        bool success = false;
-        int httpCode = http.GET();
-        if (httpCode == HTTP_CODE_OK) {
-            String payload = http.getString();
-            Serial.printf("[Remote] Status payload: %s\n", payload.c_str());
-
-            StaticJsonDocument<1024> doc;
-            DeserializationError error = deserializeJson(doc, payload);
-            if (!error) {
-                if (doc.containsKey("source")) {
-                    String src = doc["source"];
-                    if (src == "Sound") {
-                        LEDManager::setSource(SOURCE_SOUND);
-                    } else if (src == "WiFi") {
-                        LEDManager::setSource(SOURCE_WIFI);
-                    }
-                }
-                if (doc.containsKey("mode")) {
-                    int m = doc["mode"];
-                    LEDManager::setMode((VisualizerMode)m);
-                }
-                if (doc.containsKey("brightness")) {
-                    uint8_t b = doc["brightness"];
-                    LEDManager::setBrightness(b);
-                }
-                if (doc.containsKey("gain")) {
-                    activeGain = doc["gain"];
-                }
-                if (doc.containsKey("autoCycle")) {
-                    bool ac = doc["autoCycle"];
-                    LEDManager::setAutoCycle(ac);
-                }
-                Serial.println("[Remote] Initial state fetched and applied successfully.");
-                success = true;
-            } else {
-                Serial.printf("[Remote] Failed to parse status JSON: %s\n", error.c_str());
-            }
-        } else {
-            Serial.printf("[Remote] Failed to fetch status, HTTP code: %d\n", httpCode);
-        }
-        http.end();
-        return success;
+        return BLEManager::isConnectedAndSynced();
     }
 
     void setGain(float gain) {
