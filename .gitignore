@@ -1,0 +1,21 @@
+# PlatformIO local build and cache directories
+.pio
+.clangd
+.cache
+
+# VS Code config directories (except template files if any)
+.vscode/.browse.c_cpp_properties.schema.json
+.vscode/.c_cpp_properties.schema.json
+.vscode/.launch.schema.json
+.vscode/.tasks.schema.json
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+.vscode/tasks.json
+
+# Local environment configuration
+.env
+.env.*
+
+# OS generated files
+.DS_Store
+Thumbs.db
