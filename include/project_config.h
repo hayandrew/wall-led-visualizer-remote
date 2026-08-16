@@ -32,4 +32,38 @@
 #define OLED_SDA_PIN    0
 #define OLED_SCL_PIN    1
 
+#include <WiFi.h>
+
+extern WiFiClient telnetClient;
+
+class TelnetLogger : public Print {
+public:
+    void begin(unsigned long baud) {
+        ::Serial.begin(baud);
+    }
+    int available() {
+        return ::Serial.available();
+    }
+    int read() {
+        return ::Serial.read();
+    }
+    size_t write(uint8_t c) override {
+        ::Serial.write(c);
+        if (xPortInIsrContext() == pdFALSE && telnetClient && telnetClient.connected()) {
+            telnetClient.write(c);
+        }
+        return 1;
+    }
+    size_t write(const uint8_t *buffer, size_t size) override {
+        ::Serial.write(buffer, size);
+        if (xPortInIsrContext() == pdFALSE && telnetClient && telnetClient.connected()) {
+            telnetClient.write(buffer, size);
+        }
+        return size;
+    }
+};
+
+extern TelnetLogger telnetLogger;
+#define Serial telnetLogger
+
 #endif // CONFIG_H

@@ -1,48 +1,24 @@
 #include "led_manager.h"
 #include "project_config.h"
-#include <FastLED.h>
 
-CRGB leds[NUM_LEDS];
 static SourceMode currentSource = SOURCE_SOUND;
 static VisualizerMode currentMode = MODE_RAINBOW_WAVE;
 static bool autoCycleEnabled = false;
-
-// Serpentine Index Mapping
-uint16_t getLEDIndex(uint8_t x, uint8_t y) {
-    if (x >= MATRIX_WIDTH || y >= MATRIX_HEIGHT) return 0;
-    if (x % 2 == 0) {
-        // Even columns (0, 2, 4...) run bottom-to-top
-        return x * MATRIX_HEIGHT + y;
-    } else {
-        // Odd columns (1, 3, 5...) run top-to-bottom
-        return x * MATRIX_HEIGHT + (MATRIX_HEIGHT - 1 - y);
-    }
-}
+static uint8_t currentBrightness = 102; // local cache to preserve state
 
 namespace LEDManager {
 
 void init() {
-    // Initialize FastLED with GRB color order on LED_PIN
-    FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
-    
-    // Set a safe global brightness level (102 out of 255, approx 40% brightness)
-    // to prevent drawing excessive current from a USB power source
-    FastLED.setBrightness(102);
-    FastLED.clear();
-    FastLED.show();
-    
-    Serial.println("[LED] LED Manager Initialized. FastLED Ready.");
+    Serial.println("[LED] State Manager Initialized.");
 }
 
 void update() {
-    FastLED.clear();
-    FastLED.show();
+    // No-op: Remote does not drive physical LEDs
 }
 
 void setMode(VisualizerMode mode) {
     if (mode < MODE_COUNT) {
         currentMode = mode;
-        FastLED.clear();
         Serial.printf("[LED] Mode changed to: %s\n", getModeName(currentMode));
     }
 }
@@ -53,7 +29,6 @@ SourceMode getSource() {
 
 void setSource(SourceMode source) {
     currentSource = source;
-    FastLED.clear();
     Serial.printf("[LED] Source changed to: %s\n", getSourceName(currentSource));
 }
 
@@ -93,11 +68,11 @@ VisualizerMode getActiveMode() {
 }
 
 void setBrightness(uint8_t brightness) {
-    FastLED.setBrightness(brightness);
+    currentBrightness = brightness;
 }
 
 uint8_t getBrightness() {
-    return FastLED.getBrightness();
+    return currentBrightness;
 }
 
 void setAutoCycle(bool enabled) {

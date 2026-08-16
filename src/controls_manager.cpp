@@ -13,39 +13,9 @@
 namespace ControlsManager {
     ControlState currentState = STATE_NAV;
     int menuCursor = 0;
-    // State machine states
-    #define R_START 0x0
-    #define R_CW_FINAL 0x1
-    #define R_CW_BEGIN 0x2
-    #define R_CW_NEXT 0x3
-    #define R_CCW_BEGIN 0x4
-    #define R_CCW_FINAL 0x5
-    #define R_CCW_NEXT 0x6
-
-    #define DIR_CW 0x10
-    #define DIR_CCW 0x20
-
-    // Transition table for full-step encoder
-    static const uint8_t ttable[7][4] = {
-        // R_START
-        {R_START,    R_CW_BEGIN,  R_CCW_BEGIN, R_START},
-        // R_CW_FINAL
-        {R_CW_NEXT,  R_START,     R_CW_FINAL,  R_START | DIR_CW},
-        // R_CW_BEGIN
-        {R_CW_NEXT,  R_CW_BEGIN,  R_START,     R_START},
-        // R_CW_NEXT
-        {R_CW_NEXT,  R_CW_BEGIN,  R_CW_FINAL,  R_START},
-        // R_CCW_BEGIN
-        {R_CCW_NEXT, R_START,     R_CCW_BEGIN, R_START},
-        // R_CCW_FINAL
-        {R_CCW_NEXT, R_CCW_FINAL, R_START,     R_START | DIR_CCW},
-        // R_CCW_NEXT
-        {R_CCW_NEXT, R_CCW_FINAL, R_CCW_BEGIN, R_START},
-    };
-
-    // Interrupt state variables
+    // Quadrature state variables
     volatile int rawEncoderDelta = 0;
-    volatile uint8_t encoderState = R_START;
+    static volatile uint8_t lastEncoderState = 0;
     
     // State variables for non-blocking HTTP sync
     static bool remoteUpdatePending = false;
@@ -198,18 +168,23 @@ namespace ControlsManager {
     }
 
     void IRAM_ATTR handleEncoderISR() {
-        // Read current state of CLK and DT
-        uint8_t pinState = (digitalRead(ENCODER_CLK_PIN) << 1) | digitalRead(ENCODER_DT_PIN);
+        uint8_t clk = digitalRead(ENCODER_CLK_PIN);
+        uint8_t dt = digitalRead(ENCODER_DT_PIN);
+        uint8_t newState = (clk << 1) | dt;
         
-        // Lookup next state
-        encoderState = ttable[encoderState & 0x0f][pinState];
-        
-        // Check if we completed a rotation
-        uint8_t result = encoderState & 0x30;
-        if (result == DIR_CW) {
-            rawEncoderDelta++;
-        } else if (result == DIR_CCW) {
-            rawEncoderDelta--;
+        // Full 2-bit quadrature transition table
+        // Index is (lastEncoderState << 2) | newState
+        static const int8_t quad_states[16] = {
+            0,  1, -1,  0,  // 00 -> 00, 01, 10, 11
+           -1,  0,  0,  1,  // 01 -> 00, 01, 10, 11
+            1,  0,  0, -1,  // 10 -> 00, 01, 10, 11
+            0, -1,  1,  0   // 11 -> 00, 01, 10, 11
+        };
+
+        int8_t change = quad_states[(lastEncoderState << 2) | newState];
+        if (change != 0) {
+            rawEncoderDelta += change;
+            lastEncoderState = newState;
         }
     }
 
@@ -219,8 +194,9 @@ namespace ControlsManager {
         pinMode(ENCODER_DT_PIN, INPUT_PULLUP);
         pinMode(ENCODER_SW_PIN, INPUT_PULLUP);
 
-        // Initialize starting state
-        encoderState = R_START;
+        // Initialize starting state to current physical state
+        lastEncoderState = (digitalRead(ENCODER_CLK_PIN) << 1) | digitalRead(ENCODER_DT_PIN);
+        rawEncoderDelta = 0;
 
         // Create FreeRTOS Queue for settings sync
         syncQueue = xQueueCreate(1, sizeof(SyncSettings));
@@ -269,20 +245,42 @@ namespace ControlsManager {
             return;
         }
 
-        // 1. Read and clear encoder raw delta (each tick is exactly one detent click)
+        // 1. Read and clear encoder raw delta
         int delta = 0;
+        int rawDelta = 0;
+        static int lastProcessedRawDelta = 0;
+        bool rawDeltaChanged = false;
+
         noInterrupts();
-        delta = rawEncoderDelta;
-        rawEncoderDelta = 0;
+        rawDelta = rawEncoderDelta;
+        if (rawDelta != lastProcessedRawDelta) {
+            rawDeltaChanged = true;
+            rawEncoderDelta = rawDelta % 4;
+            lastProcessedRawDelta = rawEncoderDelta;
+        }
         interrupts();
 
-        // Recover from missed interrupts (e.g., during FastLED.show() disabling interrupts)
-        // by resetting the state machine to R_START when physical controls are at detent (both HIGH)
-        if (digitalRead(ENCODER_CLK_PIN) == HIGH && digitalRead(ENCODER_DT_PIN) == HIGH) {
-            noInterrupts();
-            encoderState = R_START;
-            interrupts();
+        if (rawDeltaChanged) {
+            // Trigger step on 3 transitions (divisor of 3) to handle skipped/misaligned clicks
+            delta = rawDelta / 3;
+            
+            if (delta != 0) {
+                // Clear any leftover remainder since a step was registered
+                noInterrupts();
+                rawEncoderDelta = 0;
+                lastProcessedRawDelta = 0;
+                interrupts();
+            }
+
+            if (rawDelta != 0) {
+                Serial.printf("[Controls] Encoder activity: rawDelta = %d, delta = %d, pins = %d%d\n", 
+                              rawDelta, delta, digitalRead(ENCODER_CLK_PIN), digitalRead(ENCODER_DT_PIN));
+            }
         }
+
+        // Ben Buxton's state machine naturally self-recovers and resets to R_START 
+        // when both pins return to detent (HIGH/HIGH). Polling and resetting here 
+        // can prematurely clear transitions and cause missed steps.
 
         // 2. Read SW switch press with debouncing
         static bool lastSwState = HIGH;

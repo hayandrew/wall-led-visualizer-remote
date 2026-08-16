@@ -50,6 +50,7 @@ namespace DisplayManager {
     void init() {
         Serial.println("[Display] Initializing Custom I2C for SSD1306...");
         Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
+        Wire.setClock(400000); // Speed up I2C clock to 400kHz to reduce blocking time during screen updates
 
         if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
             Serial.println("[Display] SSD1306 allocation failed. Check wiring!");
@@ -67,7 +68,53 @@ namespace DisplayManager {
         // Redraw at ~30 FPS
         static uint32_t lastDraw = 0;
         if (millis() - lastDraw < 33) return;
+
+        // Fetch active settings and controls state
+        int cursor = ControlsManager::getMenuCursor();
+        bool editing = ControlsManager::isEditing();
+        VisualizerMode modePreview = ControlsManager::getVisualizerModePreview();
+        SourceMode sourcePreview = ControlsManager::getSourcePreview();
+        uint8_t brightnessPreview = ControlsManager::getBrightnessPreview();
+        float gainPreview = ControlsManager::getGainPreview();
+        bool autoCyclePreview = ControlsManager::getAutoCyclePreview();
+
+        // Check if any state changed since the last redraw
+        static int lastCursor = -1;
+        static bool lastEditing = false;
+        static VisualizerMode lastModePreview = MODE_COUNT;
+        static SourceMode lastSourcePreview = (SourceMode)-1;
+        static uint8_t lastBrightnessPreview = 0;
+        static float lastGainPreview = -1.0f;
+        static bool lastAutoCyclePreview = false;
+        static bool lastFatalErrorActive = false;
+        static const char* lastErrorLine1 = nullptr;
+        static const char* lastErrorLine2 = nullptr;
+
+        bool dirty = (cursor != lastCursor) ||
+                     (editing != lastEditing) ||
+                     (modePreview != lastModePreview) ||
+                     (sourcePreview != lastSourcePreview) ||
+                     (brightnessPreview != lastBrightnessPreview) ||
+                     (gainPreview != lastGainPreview) ||
+                     (autoCyclePreview != lastAutoCyclePreview) ||
+                     (fatalErrorActive != lastFatalErrorActive) ||
+                     (fatalErrorLine1 != lastErrorLine1) ||
+                     (fatalErrorLine2 != lastErrorLine2);
+
+        if (!dirty) return;
+
+        // Update the last known state
         lastDraw = millis();
+        lastCursor = cursor;
+        lastEditing = editing;
+        lastModePreview = modePreview;
+        lastSourcePreview = sourcePreview;
+        lastBrightnessPreview = brightnessPreview;
+        lastGainPreview = gainPreview;
+        lastAutoCyclePreview = autoCyclePreview;
+        lastFatalErrorActive = fatalErrorActive;
+        lastErrorLine1 = fatalErrorLine1;
+        lastErrorLine2 = fatalErrorLine2;
 
         // Clear buffers and start drawing
         display.clearDisplay();
@@ -86,10 +133,6 @@ namespace DisplayManager {
             display.display();
             return;
         }
-
-        // Fetch active settings and controls state
-        int cursor = ControlsManager::getMenuCursor();
-        bool editing = ControlsManager::isEditing();
 
         // Header Title (Current Menu Item)
         display.setTextColor(SSD1306_WHITE);

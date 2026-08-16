@@ -1,4 +1,5 @@
 #include "diyhue_manager.h"
+#include "project_config.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>

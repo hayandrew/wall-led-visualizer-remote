@@ -7,6 +7,10 @@
 #include "display_manager.h"
 #include "diyhue_manager.h"
 
+WiFiServer telnetServer(23);
+WiFiClient telnetClient;
+TelnetLogger telnetLogger;
+
 static bool waitAndCheckBypass(int ms) {
   int steps = ms / 50;
   for (int i = 0; i < steps; i++) {
@@ -191,6 +195,10 @@ void setup() {
   DisplayManager::drawBootStatus("Initializing...", "diyHue Server");
   DiyHueManager::init();
 
+  // Start Telnet Server
+  telnetServer.begin();
+  telnetServer.setNoDelay(true);
+
   DisplayManager::drawBootStatus("Boot Complete");
   delay(500);
 
@@ -198,6 +206,15 @@ void setup() {
 }
 
 void loop() {
+  // Check for incoming Telnet connections
+  if (telnetServer.hasClient()) {
+    if (telnetClient && telnetClient.connected()) {
+      telnetClient.stop();
+    }
+    telnetClient = telnetServer.available();
+    telnetClient.println("\n=== Connected to ESP32 OTA Serial Monitor ===");
+  }
+
   // Handle OTA update check
   ArduinoOTA.handle();
 
@@ -243,14 +260,6 @@ void loop() {
 
   // 4. Update the visualizer animation frame
   LEDManager::update();
-
-  // Print status to Serial Monitor every 500ms
-  static unsigned long lastPrint = 0;
-  if (millis() - lastPrint >= 500) {
-    lastPrint = millis();
-    Serial.printf("[Status] Active Mode: %s\n", 
-                  LEDManager::getModeName(LEDManager::getActiveMode()));
-  }
 
   // Yield to keep the Wi-Fi/IP stack healthy
   delay(10);
