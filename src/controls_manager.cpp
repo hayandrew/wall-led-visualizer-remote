@@ -261,9 +261,21 @@ namespace ControlsManager {
         interrupts();
 
         if (rawDeltaChanged) {
-            // Trigger step on 3 transitions (divisor of 3) to handle skipped/misaligned clicks
-            delta = rawDelta / 3;
+            delta = rawDelta / 4;
             
+            // Check if the physical encoder is at the detent rest position (both pins HIGH)
+            bool isAtDetent = (digitalRead(ENCODER_CLK_PIN) == HIGH && digitalRead(ENCODER_DT_PIN) == HIGH);
+            if (isAtDetent) {
+                int remainder = rawDelta % 4;
+                // If we returned to detent with a significant partial turn (3 steps),
+                // round it up/down to register the click.
+                if (remainder >= 3) {
+                    delta += 1;
+                } else if (remainder <= -3) {
+                    delta -= 1;
+                }
+            }
+
             if (delta != 0) {
                 // Clear any leftover remainder since a step was registered
                 noInterrupts();

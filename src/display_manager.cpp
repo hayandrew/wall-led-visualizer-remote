@@ -31,6 +31,25 @@ namespace DisplayManager {
         display.print(text);
     }
 
+    // Centered text drawing helper with left/right arrowheads flanking it at the margins
+    void drawHeaderWithArrows(const char* text, int y, bool drawArrows) {
+        int len = strlen(text);
+        int charWidth = 6;
+        int x_start = (128 - (len * charWidth)) / 2;
+
+        display.setTextSize(1);
+        display.setCursor(x_start, y + 10);
+        display.print(text);
+
+        if (drawArrows) {
+            // Draw left arrow (pointing left) at the left margin
+            display.fillTriangle(4, y + 14, 8, y + 11, 8, y + 17, SSD1306_WHITE);
+
+            // Draw right arrow (pointing right) at the right margin
+            display.fillTriangle(124, y + 14, 120, y + 11, 120, y + 17, SSD1306_WHITE);
+        }
+    }
+
     // Helper to get shortened mode names that fit on the 128px screen width
     const char* getShortModeName(VisualizerMode mode) {
         switch (mode) {
@@ -137,11 +156,11 @@ namespace DisplayManager {
         // Header Title (Current Menu Item)
         display.setTextColor(SSD1306_WHITE);
         switch (cursor) {
-            case 0: drawCenteredText("VISUALIZER", 5, 1); break;
-            case 1: drawCenteredText("SOURCE", 5, 1); break;
-            case 2: drawCenteredText("BRIGHTNESS", 5, 1); break;
-            case 3: drawCenteredText("MIC GAIN", 5, 1); break;
-            case 4: drawCenteredText("CYCLE", 5, 1); break;
+            case 0: drawHeaderWithArrows("VISUALIZER", 5, !editing); break;
+            case 1: drawHeaderWithArrows("SOURCE", 5, !editing); break;
+            case 2: drawHeaderWithArrows("BRIGHTNESS", 5, !editing); break;
+            case 3: drawHeaderWithArrows("MIC GAIN", 5, !editing); break;
+            case 4: drawHeaderWithArrows("CYCLE", 5, !editing); break;
         }
         display.drawFastHLine(0, 9 + 20, 128, SSD1306_WHITE);
 
