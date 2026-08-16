@@ -1,6 +1,7 @@
 #include "controls_manager.h"
 #include "project_config.h"
 #include "led_manager.h"
+#include "display_manager.h"
 #include <cmath>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -50,6 +51,9 @@ namespace ControlsManager {
     static bool remoteUpdatePending = false;
     static uint32_t lastInteractionTime = 0;
 
+    static volatile bool connectionFailed = false;
+    static volatile bool retryRequested = false;
+
     // Active gain setting stored locally to preserve HTTP payload structure
     static float activeGain = 1.0f;
 
@@ -76,33 +80,98 @@ namespace ControlsManager {
         SyncSettings settings;
         while (true) {
             if (xQueueReceive(syncQueue, &settings, portMAX_DELAY) == pdTRUE) {
-                if (WiFi.status() == WL_CONNECTED) {
-                    HTTPClient http;
-                    http.begin("http://192.168.68.55/api/settings");
-                    http.addHeader("Content-Type", "application/json");
-                    http.setTimeout(2000); // 2-second timeout in background
+                bool verified = false;
+                
+                while (!verified) {
+                    if (WiFi.status() == WL_CONNECTED) {
+                        HTTPClient http;
+                        http.begin("http://192.168.68.55/api/settings");
+                        http.addHeader("Content-Type", "application/json");
+                        http.setTimeout(2000); // 2-second timeout in background
 
-                    StaticJsonDocument<256> doc;
-                    doc["source"] = LEDManager::getSourceName(settings.source);
-                    doc["mode"] = (int)settings.mode;
-                    doc["brightness"] = settings.brightness;
-                    doc["gain"] = settings.gain;
-                    doc["autoCycle"] = settings.autoCycle;
+                        StaticJsonDocument<256> doc;
+                        doc["source"] = LEDManager::getSourceName(settings.source);
+                        doc["mode"] = (int)settings.mode;
+                        doc["brightness"] = settings.brightness;
+                        doc["gain"] = settings.gain;
+                        doc["autoCycle"] = settings.autoCycle;
 
-                    String payload;
-                    serializeJson(doc, payload);
+                        String payload;
+                        serializeJson(doc, payload);
 
-                    Serial.printf("[Remote Task] Syncing to wall visualizer: %s\n", payload.c_str());
+                        Serial.printf("[Remote Task] Syncing to wall visualizer: %s\n", payload.c_str());
 
-                    int httpCode = http.POST(payload);
-                    if (httpCode > 0) {
-                        Serial.printf("[Remote Task] HTTP POST response: %d\n", httpCode);
+                        int httpCode = http.POST(payload);
+                        if (httpCode == HTTP_CODE_OK) {
+                            Serial.printf("[Remote Task] HTTP POST response: %d (verified)\n", httpCode);
+                            verified = true;
+                        } else {
+                            Serial.printf("[Remote Task] HTTP POST failed: %d\n", httpCode);
+                        }
+                        http.end();
                     } else {
-                        Serial.printf("[Remote Task] HTTP POST failed: %s\n", http.errorToString(httpCode).c_str());
+                        Serial.println("[Remote Task] WiFi not connected on initial sync attempt.");
                     }
-                    http.end();
-                } else {
-                    Serial.println("[Remote Task] WiFi not connected, skipping sync.");
+
+                    if (verified) {
+                        break;
+                    }
+
+                    // Loop for 10 seconds, retrying every second
+                    Serial.println("[Remote Task] Connection lost or not verified. Retrying every second for 10 seconds...");
+                    for (int attempt = 1; attempt <= 10; attempt++) {
+                        delay(1000);
+                        
+                        if (WiFi.status() != WL_CONNECTED) {
+                            Serial.printf("[Remote Task] Reconnect attempt %d: WiFi not connected. Calling WiFi.begin...\n", attempt);
+                            WiFi.begin(WIFI_SSID, WIFI_PASS);
+                        }
+                        
+                        if (WiFi.status() == WL_CONNECTED) {
+                            Serial.printf("[Remote Task] Reconnect attempt %d: WiFi connected. Sending package...\n", attempt);
+                            HTTPClient http;
+                            http.begin("http://192.168.68.55/api/settings");
+                            http.addHeader("Content-Type", "application/json");
+                            http.setTimeout(2000);
+
+                            StaticJsonDocument<256> doc;
+                            doc["source"] = LEDManager::getSourceName(settings.source);
+                            doc["mode"] = (int)settings.mode;
+                            doc["brightness"] = settings.brightness;
+                            doc["gain"] = settings.gain;
+                            doc["autoCycle"] = settings.autoCycle;
+
+                            String payload;
+                            serializeJson(doc, payload);
+
+                            int httpCode = http.POST(payload);
+                            if (httpCode == HTTP_CODE_OK) {
+                                Serial.printf("[Remote Task] Package sent and verified on attempt %d.\n", attempt);
+                                verified = true;
+                                http.end();
+                                break;
+                            } else {
+                                Serial.printf("[Remote Task] Send failed on attempt %d with code %d.\n", attempt, httpCode);
+                            }
+                            http.end();
+                        }
+                    }
+
+                    if (!verified) {
+                        Serial.println("[Remote Task] Failed to reconnect and verify within 10 seconds. Waiting for click to retry...");
+                        DisplayManager::setFatalError("No connection.", "Click to retry.");
+                        connectionFailed = true;
+                        retryRequested = false;
+
+                        while (!retryRequested) {
+                            delay(100);
+                        }
+
+                        connectionFailed = false;
+                        retryRequested = false;
+                        DisplayManager::clearFatalError();
+                        Serial.println("[Remote Task] Retry requested by user. Retrying...");
+                    }
                 }
             }
         }
@@ -176,6 +245,30 @@ namespace ControlsManager {
     }
 
     void update() {
+        if (connectionFailed) {
+            // Read SW switch press with debouncing
+            static bool lastSwState = HIGH;
+            static uint32_t lastSwDebounceTime = 0;
+            bool currentSwState = digitalRead(ENCODER_SW_PIN);
+            bool swClicked = false;
+
+            if (currentSwState != lastSwState) {
+                if (millis() - lastSwDebounceTime > 50) {
+                    if (currentSwState == LOW) {
+                        swClicked = true;
+                        Serial.println("[Controls] Encoder switch clicked during connection error.");
+                    }
+                    lastSwState = currentSwState;
+                    lastSwDebounceTime = millis();
+                }
+            }
+
+            if (swClicked) {
+                retryRequested = true;
+            }
+            return;
+        }
+
         // 1. Read and clear encoder raw delta (each tick is exactly one detent click)
         int delta = 0;
         noInterrupts();

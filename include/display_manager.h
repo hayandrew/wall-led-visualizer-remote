@@ -18,6 +18,15 @@ namespace DisplayManager {
 
     // Draw boot status screen
     void drawBootStatus(const char* status, const char* details = nullptr);
+
+    // Set fatal connection error state
+    void setFatalError(const char* line1, const char* line2 = nullptr);
+
+    // Clear fatal connection error state
+    void clearFatalError();
+
+    // Check if fatal connection error state is active
+    bool isFatalErrorActive();
 }
 
 #endif // DISPLAY_MANAGER_H

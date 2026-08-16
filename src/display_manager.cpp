@@ -16,6 +16,10 @@ static Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 namespace DisplayManager {
 
+    static volatile bool fatalErrorActive = false;
+    static const char* fatalErrorLine1 = nullptr;
+    static const char* fatalErrorLine2 = nullptr;
+
     // Centered text drawing helper
     void drawCenteredText(const char* text, int y, int size) {
         int len = strlen(text);
@@ -68,6 +72,21 @@ namespace DisplayManager {
         // Clear buffers and start drawing
         display.clearDisplay();
 
+        if (fatalErrorActive) {
+            display.setTextColor(SSD1306_WHITE);
+            drawCenteredText("CONNECTION ERROR", 4, 1);
+            display.drawFastHLine(0, 14 + 10, 128, SSD1306_WHITE);
+            
+            if (fatalErrorLine1 != nullptr) {
+                drawCenteredText(fatalErrorLine1, 28, 1);
+            }
+            if (fatalErrorLine2 != nullptr) {
+                drawCenteredText(fatalErrorLine2, 44, 1);
+            }
+            display.display();
+            return;
+        }
+
         // Fetch active settings and controls state
         int cursor = ControlsManager::getMenuCursor();
         bool editing = ControlsManager::isEditing();
@@ -75,26 +94,26 @@ namespace DisplayManager {
         // Header Title (Current Menu Item)
         display.setTextColor(SSD1306_WHITE);
         switch (cursor) {
-            case 0: drawCenteredText("Visualizer Mode", 0 + 10, 1); break;
-            case 1: drawCenteredText("Source Select", 0 + 10, 1); break;
-            case 2: drawCenteredText("LED Brightness", 0 + 10, 1); break;
-            case 3: drawCenteredText("Microphone Gain", 0 + 10, 1); break;
-            case 4: drawCenteredText("Auto-Cycling", 0 + 10, 1); break;
+            case 0: drawCenteredText("VISUALIZER", 5, 1); break;
+            case 1: drawCenteredText("SOURCE", 5, 1); break;
+            case 2: drawCenteredText("BRIGHTNESS", 5, 1); break;
+            case 3: drawCenteredText("MIC GAIN", 5, 1); break;
+            case 4: drawCenteredText("CYCLE", 5, 1); break;
         }
         display.drawFastHLine(0, 9 + 20, 128, SSD1306_WHITE);
 
         // Render Focused Parameter Value or Progress Bar
         if (cursor == 0) {
-            drawCenteredText(getShortModeName(ControlsManager::getVisualizerModePreview()), 26 + 10, 2);
+            drawCenteredText(getShortModeName(ControlsManager::getVisualizerModePreview()), 31, 2);
             if (editing) {
-                display.fillTriangle(4, 29 + 20, 4, 39 + 20, 10, 34 + 20, SSD1306_WHITE);
-                display.fillTriangle(124, 29 + 20, 124, 39 + 20, 118, 34 + 20, SSD1306_WHITE);
+                display.fillTriangle(4, 29 + 15, 4, 39 + 15, 10, 34 + 15, SSD1306_WHITE);
+                display.fillTriangle(124, 29 + 15, 124, 39 + 15, 118, 34 + 15, SSD1306_WHITE);
             }
         } else if (cursor == 1) {
-            drawCenteredText(LEDManager::getSourceName(ControlsManager::getSourcePreview()), 26 + 10, 2);
+            drawCenteredText(LEDManager::getSourceName(ControlsManager::getSourcePreview()), 31, 2);
             if (editing) {
-                display.fillTriangle(4, 29 + 20, 4, 39 + 20, 10, 34 + 20, SSD1306_WHITE);
-                display.fillTriangle(124, 29 + 20, 124, 39 + 20, 118, 34 + 20, SSD1306_WHITE);
+                display.fillTriangle(4, 29 + 15, 4, 39 + 15, 10, 34 + 15, SSD1306_WHITE);
+                display.fillTriangle(124, 29 + 15, 124, 39 + 15, 118, 34 + 15, SSD1306_WHITE);
             }
         } else if (cursor == 2) {
             int pct = (int)round((ControlsManager::getBrightnessPreview() * 100.0) / 255.0);
@@ -104,20 +123,20 @@ namespace DisplayManager {
                 if (fillWidth > 80) fillWidth = 80;
                 if (fillWidth < 0) fillWidth = 0;
                 
-                display.drawRect(8, 28 + 20, 80, 12, SSD1306_WHITE);
-                display.fillRect(8, 28 + 20, fillWidth, 12, SSD1306_WHITE);
+                display.drawRect(8, 28 + 15, 80, 12, SSD1306_WHITE);
+                display.fillRect(8, 28 + 15, fillWidth, 12, SSD1306_WHITE);
                 
                 char buf[8];
                 sprintf(buf, "%d%%", pct);
                 int tx = 112 - (strlen(buf) * 3); // Center of right-hand column (x=96 to 127)
                 display.setTextColor(SSD1306_WHITE);
                 display.setTextSize(1);
-                display.setCursor(tx, 30 + 20);
+                display.setCursor(tx, 30 + 15);
                 display.print(buf);
             } else {
                 char buf[8];
                 sprintf(buf, "%d%%", pct);
-                drawCenteredText(buf, 26 + 10, 2);
+                drawCenteredText(buf, 31, 2);
             }
         } else if (cursor == 3) {
             float g = ControlsManager::getGainPreview();
@@ -128,27 +147,27 @@ namespace DisplayManager {
                 if (fillWidth > 80) fillWidth = 80;
                 if (fillWidth < 0) fillWidth = 0;
                 
-                display.drawRect(8, 28 + 20, 80, 12, SSD1306_WHITE);
-                display.fillRect(8, 28 + 20, fillWidth, 12, SSD1306_WHITE);
+                display.drawRect(8, 28 + 15, 80, 12, SSD1306_WHITE);
+                display.fillRect(8, 28 + 15, fillWidth, 12, SSD1306_WHITE);
                 
                 char buf[8];
                 sprintf(buf, "%.1fx", g);
                 int tx = 112 - (strlen(buf) * 3); // Center of right-hand column (x=96 to 127)
                 display.setTextColor(SSD1306_WHITE);
                 display.setTextSize(1);
-                display.setCursor(tx, 30 + 20);
+                display.setCursor(tx, 30 + 15);
                 display.print(buf);
             } else {
                 char buf[8];
                 sprintf(buf, "%.1fx", g);
-                drawCenteredText(buf, 26 + 10, 2);
+                drawCenteredText(buf, 31, 2);
             }
         } else if (cursor == 4) {
             bool ac = ControlsManager::getAutoCyclePreview();
-            drawCenteredText(ac ? "ON" : "OFF", 26 + 10, 2);
+            drawCenteredText(ac ? "ON" : "OFF", 31, 2);
             if (editing) {
-                display.fillTriangle(4, 29 + 20, 4, 39 + 20, 10, 34 + 20, SSD1306_WHITE);
-                display.fillTriangle(124, 29 + 20, 124, 39 + 20, 118, 34 + 20, SSD1306_WHITE);
+                display.fillTriangle(4, 29 + 15, 4, 39 + 15, 10, 34 + 15, SSD1306_WHITE);
+                display.fillTriangle(124, 29 + 15, 124, 39 + 15, 118, 34 + 15, SSD1306_WHITE);
             }
         }
 
@@ -215,5 +234,19 @@ namespace DisplayManager {
             drawCenteredText(details, 44, 1);
         }
         display.display();
+    }
+
+    void setFatalError(const char* line1, const char* line2) {
+        fatalErrorLine1 = line1;
+        fatalErrorLine2 = line2;
+        fatalErrorActive = true;
+    }
+
+    void clearFatalError() {
+        fatalErrorActive = false;
+    }
+
+    bool isFatalErrorActive() {
+        return fatalErrorActive;
     }
 }

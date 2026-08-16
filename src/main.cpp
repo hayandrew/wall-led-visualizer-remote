@@ -144,30 +144,44 @@ void setup() {
 
   // Synchronize settings with the main LED panel on boot
   if (WiFi.status() == WL_CONNECTED) {
-    DisplayManager::drawBootStatus("Connecting to Panel", "Syncing Settings...");
-    
     bool syncSuccess = false;
-    int syncAttempts = 0;
     
     while (!syncSuccess) {
-      syncAttempts++;
-      char detailBuf[64];
-      sprintf(detailBuf, "Attempt %d (Click to Skip)", syncAttempts);
-      DisplayManager::drawBootStatus("Connecting to Panel", detailBuf);
+      unsigned long startTime = millis();
+      int attempt = 0;
       
-      syncSuccess = ControlsManager::fetchStateFromRemote();
-      
-      if (syncSuccess) {
-        DisplayManager::drawBootStatus("Panel Synced", "Settings Applied");
-        delay(1000);
-      } else {
-        Serial.println("[Remote] Panel sync failed. Retrying...");
-        DisplayManager::drawBootStatus("Sync Failed", "Retrying in 2s...");
-        if (waitAndCheckBypass(2000)) {
-          Serial.println("[Remote] Sync bypassed by user.");
-          DisplayManager::drawBootStatus("Sync Skipped", "Operating Offline");
+      while (!syncSuccess && (millis() - startTime < 10000)) {
+        attempt++;
+        char detailBuf[64];
+        sprintf(detailBuf, "Attempt %d...", attempt);
+        DisplayManager::drawBootStatus("Connecting to Panel", detailBuf);
+        
+        syncSuccess = ControlsManager::fetchStateFromRemote();
+        if (syncSuccess) {
+          DisplayManager::drawBootStatus("Panel Synced", "Settings Applied");
           delay(1000);
           break;
+        } else {
+          Serial.println("[Remote] Panel sync failed. Retrying in 1s...");
+          delay(1000);
+        }
+      }
+      
+      if (!syncSuccess) {
+        DisplayManager::drawBootStatus("Ensure the LED panel", "is on. Click to retry");
+        Serial.println("[Remote] Panel sync failed after 10s. Waiting for dial click to retry...");
+        
+        // Wait for rotary dial switch click
+        bool clicked = false;
+        while (!clicked) {
+          if (digitalRead(ENCODER_SW_PIN) == LOW) {
+            clicked = true;
+            delay(200); // Debounce
+            while (digitalRead(ENCODER_SW_PIN) == LOW) {
+              delay(10);
+            }
+          }
+          delay(50);
         }
       }
     }
