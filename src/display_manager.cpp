@@ -96,6 +96,7 @@ namespace DisplayManager {
         uint8_t brightnessPreview = ControlsManager::getBrightnessPreview();
         float gainPreview = ControlsManager::getGainPreview();
         bool autoCyclePreview = ControlsManager::getAutoCyclePreview();
+        bool systemOnPreview = ControlsManager::getSystemOnPreview();
 
         // Check if any state changed since the last redraw
         static int lastCursor = -1;
@@ -105,6 +106,7 @@ namespace DisplayManager {
         static uint8_t lastBrightnessPreview = 0;
         static float lastGainPreview = -1.0f;
         static bool lastAutoCyclePreview = false;
+        static bool lastSystemOnPreview = false;
         static bool lastFatalErrorActive = false;
         static const char* lastErrorLine1 = nullptr;
         static const char* lastErrorLine2 = nullptr;
@@ -116,6 +118,7 @@ namespace DisplayManager {
                      (brightnessPreview != lastBrightnessPreview) ||
                      (gainPreview != lastGainPreview) ||
                      (autoCyclePreview != lastAutoCyclePreview) ||
+                     (systemOnPreview != lastSystemOnPreview) ||
                      (fatalErrorActive != lastFatalErrorActive) ||
                      (fatalErrorLine1 != lastErrorLine1) ||
                      (fatalErrorLine2 != lastErrorLine2);
@@ -131,6 +134,7 @@ namespace DisplayManager {
         lastBrightnessPreview = brightnessPreview;
         lastGainPreview = gainPreview;
         lastAutoCyclePreview = autoCyclePreview;
+        lastSystemOnPreview = systemOnPreview;
         lastFatalErrorActive = fatalErrorActive;
         lastErrorLine1 = fatalErrorLine1;
         lastErrorLine2 = fatalErrorLine2;
@@ -157,10 +161,10 @@ namespace DisplayManager {
         display.setTextColor(SSD1306_WHITE);
         switch (cursor) {
             case 0: drawHeaderWithArrows("VISUALIZER", 5, !editing); break;
-            case 1: drawHeaderWithArrows("CYCLE", 5, !editing); break;
-            case 2: drawHeaderWithArrows("MIC GAIN", 5, !editing); break;
+            case 1: drawHeaderWithArrows("SOURCE", 5, !editing); break;
+            case 2: drawHeaderWithArrows("CYCLE", 5, !editing); break;
             case 3: drawHeaderWithArrows("BRIGHTNESS", 5, !editing); break;
-            case 4: drawHeaderWithArrows("SOURCE", 5, !editing); break;
+            case 4: drawHeaderWithArrows("MIC GAIN", 5, !editing); break;
             case 5: drawHeaderWithArrows("POWER", 5, !editing); break;
         }
         display.drawFastHLine(0, 9 + 20, 128, SSD1306_WHITE);
@@ -173,35 +177,17 @@ namespace DisplayManager {
                 display.fillTriangle(124, 29 + 15, 124, 39 + 15, 118, 34 + 15, SSD1306_WHITE);
             }
         } else if (cursor == 1) {
-            bool ac = ControlsManager::getAutoCyclePreview();
-            drawCenteredText(ac ? "ON" : "OFF", 31, 2);
+            drawCenteredText(LEDManager::getSourceName(ControlsManager::getSourcePreview()), 31, 2);
             if (editing) {
                 display.fillTriangle(4, 29 + 15, 4, 39 + 15, 10, 34 + 15, SSD1306_WHITE);
                 display.fillTriangle(124, 29 + 15, 124, 39 + 15, 118, 34 + 15, SSD1306_WHITE);
             }
         } else if (cursor == 2) {
-            float g = ControlsManager::getGainPreview();
+            bool ac = ControlsManager::getAutoCyclePreview();
+            drawCenteredText(ac ? "ON" : "OFF", 31, 2);
             if (editing) {
-                // Draw progress bar for gain on the left (0.2x to 2.0x mapped to 0-80px)
-                float gainPct = ((g - 0.2f) / (2.0f - 0.2f)) * 100.0f;
-                int fillWidth = (int)((gainPct * 80.0f) / 100.0f);
-                if (fillWidth > 80) fillWidth = 80;
-                if (fillWidth < 0) fillWidth = 0;
-                
-                display.drawRect(8, 28 + 15, 80, 12, SSD1306_WHITE);
-                display.fillRect(8, 28 + 15, fillWidth, 12, SSD1306_WHITE);
-                
-                char buf[8];
-                sprintf(buf, "%.1fx", g);
-                int tx = 112 - (strlen(buf) * 3); // Center of right-hand column (x=96 to 127)
-                display.setTextColor(SSD1306_WHITE);
-                display.setTextSize(1);
-                display.setCursor(tx, 30 + 15);
-                display.print(buf);
-            } else {
-                char buf[8];
-                sprintf(buf, "%.1fx", g);
-                drawCenteredText(buf, 31, 2);
+                display.fillTriangle(4, 29 + 15, 4, 39 + 15, 10, 34 + 15, SSD1306_WHITE);
+                display.fillTriangle(124, 29 + 15, 124, 39 + 15, 118, 34 + 15, SSD1306_WHITE);
             }
         } else if (cursor == 3) {
             int pct = (int)round((ControlsManager::getBrightnessPreview() * 100.0) / 255.0);
@@ -227,10 +213,28 @@ namespace DisplayManager {
                 drawCenteredText(buf, 31, 2);
             }
         } else if (cursor == 4) {
-            drawCenteredText(LEDManager::getSourceName(ControlsManager::getSourcePreview()), 31, 2);
+            float g = ControlsManager::getGainPreview();
             if (editing) {
-                display.fillTriangle(4, 29 + 15, 4, 39 + 15, 10, 34 + 15, SSD1306_WHITE);
-                display.fillTriangle(124, 29 + 15, 124, 39 + 15, 118, 34 + 15, SSD1306_WHITE);
+                // Draw progress bar for gain on the left (0.2x to 2.0x mapped to 0-80px)
+                float gainPct = ((g - 0.2f) / (2.0f - 0.2f)) * 100.0f;
+                int fillWidth = (int)((gainPct * 80.0f) / 100.0f);
+                if (fillWidth > 80) fillWidth = 80;
+                if (fillWidth < 0) fillWidth = 0;
+                
+                display.drawRect(8, 28 + 15, 80, 12, SSD1306_WHITE);
+                display.fillRect(8, 28 + 15, fillWidth, 12, SSD1306_WHITE);
+                
+                char buf[8];
+                sprintf(buf, "%.1fx", g);
+                int tx = 112 - (strlen(buf) * 3); // Center of right-hand column (x=96 to 127)
+                display.setTextColor(SSD1306_WHITE);
+                display.setTextSize(1);
+                display.setCursor(tx, 30 + 15);
+                display.print(buf);
+            } else {
+                char buf[8];
+                sprintf(buf, "%.1fx", g);
+                drawCenteredText(buf, 31, 2);
             }
         } else if (cursor == 5) {
             bool onState = ControlsManager::getSystemOnPreview();

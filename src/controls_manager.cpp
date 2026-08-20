@@ -321,7 +321,7 @@ namespace ControlsManager {
         int numItems = 6;
         if (LEDManager::getSource() == SOURCE_WIFI) {
             numItems = 6;
-            if (menuCursor != 4 && menuCursor != 5) {
+            if (menuCursor != 1 && menuCursor != 5) {
                 menuCursor = 5; // default to Power on WiFi mode
             }
         }
@@ -338,10 +338,8 @@ namespace ControlsManager {
                     if (menuCursor < 0) menuCursor = numItems - 1;
                     if (menuCursor >= numItems) menuCursor = 0;
                 } else {
-                    // In WiFi mode, only allow toggling between 4 (Source) and 5 (Power)
-                    menuCursor += delta;
-                    if (menuCursor < 4) menuCursor = 5;
-                    if (menuCursor > 5) menuCursor = 4;
+                    // In WiFi mode, only allow toggling between 1 (Source) and 5 (Power)
+                    menuCursor = (menuCursor == 1) ? 5 : 1;
                 }
                 Serial.printf("[Controls] Menu cursor: %d\n", menuCursor);
             }
@@ -352,10 +350,10 @@ namespace ControlsManager {
                 // Initialize preview values when entering edit mode
                 switch (menuCursor) {
                     case 0: selectedModePreview = LEDManager::getActiveMode(); break;
-                    case 1: selectedAutoCyclePreview = LEDManager::getAutoCycle(); break;
-                    case 2: selectedGainPreview = activeGain; break;
+                    case 1: selectedSourcePreview = LEDManager::getSource(); break;
+                    case 2: selectedAutoCyclePreview = LEDManager::getAutoCycle(); break;
                     case 3: selectedBrightnessPreview = LEDManager::getBrightness(); break;
-                    case 4: selectedSourcePreview = LEDManager::getSource(); break;
+                    case 4: selectedGainPreview = activeGain; break;
                     case 5: selectedSystemOnPreview = systemOn; break;
                 }
             }
@@ -373,23 +371,22 @@ namespace ControlsManager {
                         Serial.printf("[Controls] Mode preview changed to: %s\n", LEDManager::getModeName(selectedModePreview));
                         break;
                     }
-                    case 1: { // Auto-Cycle (Toggle)
-                        if (delta > 0) {
+                    case 1: { // Source Selection
+                        if (delta < 0) {
+                            selectedSourcePreview = SOURCE_WIFI;
+                        } else if (delta > 0) {
+                            selectedSourcePreview = SOURCE_SOUND;
+                        }
+                        Serial.printf("[Controls] Source preview changed to: %s\n", LEDManager::getSourceName(selectedSourcePreview));
+                        break;
+                    }
+                    case 2: { // Auto-Cycle (Toggle)
+                        if (delta < 0) {
                             selectedAutoCyclePreview = true;
-                        } else if (delta < 0) {
+                        } else if (delta > 0) {
                             selectedAutoCyclePreview = false;
                         }
                         Serial.printf("[Controls] Auto-Cycle preview changed to: %s\n", selectedAutoCyclePreview ? "ON" : "OFF");
-                        break;
-                    }
-                    case 2: { // Gain (Step by 0.1, 0.2 to 2.0)
-                        float g = selectedGainPreview;
-                        g -= delta * 0.1f;
-                        if (g < 0.2f) g = 0.2f;
-                        if (g > 2.0f) g = 2.0f;
-                        
-                        selectedGainPreview = g;
-                        Serial.printf("[Controls] Gain preview changed to: %.1f\n", g);
                         break;
                     }
                     case 3: { // Brightness (Step by 5%, 0% to 100%)
@@ -403,19 +400,20 @@ namespace ControlsManager {
                         Serial.printf("[Controls] Brightness preview changed to: %d%% (%d/255)\n", nextPct, b);
                         break;
                     }
-                    case 4: { // Source Selection
-                        if (delta > 0) {
-                            selectedSourcePreview = SOURCE_WIFI;
-                        } else if (delta < 0) {
-                            selectedSourcePreview = SOURCE_SOUND;
-                        }
-                        Serial.printf("[Controls] Source preview changed to: %s\n", LEDManager::getSourceName(selectedSourcePreview));
+                    case 4: { // Gain (Step by 0.1, 0.2 to 2.0)
+                        float g = selectedGainPreview;
+                        g -= delta * 0.1f;
+                        if (g < 0.2f) g = 0.2f;
+                        if (g > 2.0f) g = 2.0f;
+                        
+                        selectedGainPreview = g;
+                        Serial.printf("[Controls] Gain preview changed to: %.1f\n", g);
                         break;
                     }
                     case 5: { // Power Selection (Toggle)
-                        if (delta > 0) {
+                        if (delta < 0) {
                             selectedSystemOnPreview = true;
-                        } else if (delta < 0) {
+                        } else if (delta > 0) {
                             selectedSystemOnPreview = false;
                         }
                         Serial.printf("[Controls] Power preview changed to: %s\n", selectedSystemOnPreview ? "ON" : "OFF");
@@ -434,16 +432,16 @@ namespace ControlsManager {
                         LEDManager::setMode(selectedModePreview);
                         break;
                     case 1:
-                        LEDManager::setAutoCycle(selectedAutoCyclePreview);
+                        LEDManager::setSource(selectedSourcePreview);
                         break;
                     case 2:
-                        activeGain = selectedGainPreview;
+                        LEDManager::setAutoCycle(selectedAutoCyclePreview);
                         break;
                     case 3:
                         LEDManager::setBrightness(selectedBrightnessPreview);
                         break;
                     case 4:
-                        LEDManager::setSource(selectedSourcePreview);
+                        activeGain = selectedGainPreview;
                         break;
                     case 5:
                         systemOn = selectedSystemOnPreview;
@@ -483,10 +481,17 @@ namespace ControlsManager {
     }
 
     SourceMode getSourcePreview() {
-        if (currentState == STATE_EDIT && menuCursor == 4) {
+        if (currentState == STATE_EDIT && menuCursor == 1) {
             return selectedSourcePreview;
         }
         return LEDManager::getSource();
+    }
+
+    bool getAutoCyclePreview() {
+        if (currentState == STATE_EDIT && menuCursor == 2) {
+            return selectedAutoCyclePreview;
+        }
+        return LEDManager::getAutoCycle();
     }
 
     uint8_t getBrightnessPreview() {
@@ -497,17 +502,10 @@ namespace ControlsManager {
     }
 
     float getGainPreview() {
-        if (currentState == STATE_EDIT && menuCursor == 2) {
+        if (currentState == STATE_EDIT && menuCursor == 4) {
             return selectedGainPreview;
         }
         return activeGain;
-    }
-
-    bool getAutoCyclePreview() {
-        if (currentState == STATE_EDIT && menuCursor == 1) {
-            return selectedAutoCyclePreview;
-        }
-        return LEDManager::getAutoCycle();
     }
 
     bool getSystemOnPreview() {
