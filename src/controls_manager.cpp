@@ -33,6 +33,8 @@ namespace ControlsManager {
     static uint8_t selectedBrightnessPreview = 0;
     static float selectedGainPreview = 1.0f;
     static bool selectedAutoCyclePreview = false;
+    static bool systemOn = true;
+    static bool selectedSystemOnPreview = true;
 
     // Struct to hold sync payload
     struct SyncSettings {
@@ -41,6 +43,7 @@ namespace ControlsManager {
         uint8_t brightness;
         float gain;
         bool autoCycle;
+        bool systemOn;
     };
 
     static QueueHandle_t syncQueue = NULL;
@@ -65,6 +68,7 @@ namespace ControlsManager {
                         doc["brightness"] = settings.brightness;
                         doc["gain"] = settings.gain;
                         doc["autoCycle"] = settings.autoCycle;
+                        doc["on"] = settings.systemOn;
 
                         String payload;
                         serializeJson(doc, payload);
@@ -110,6 +114,7 @@ namespace ControlsManager {
                             doc["brightness"] = settings.brightness;
                             doc["gain"] = settings.gain;
                             doc["autoCycle"] = settings.autoCycle;
+                            doc["on"] = settings.systemOn;
 
                             String payload;
                             serializeJson(doc, payload);
@@ -159,6 +164,7 @@ namespace ControlsManager {
         settings.brightness = LEDManager::getBrightness();
         settings.gain = activeGain;
         settings.autoCycle = LEDManager::getAutoCycle();
+        settings.systemOn = systemOn;
 
         if (xQueueOverwrite(syncQueue, &settings) != pdTRUE) {
             Serial.println("[Remote] Failed to write settings to syncQueue.");
@@ -312,10 +318,12 @@ namespace ControlsManager {
         }
 
         // Determine number of items based on source
-        int numItems = 5;
+        int numItems = 6;
         if (LEDManager::getSource() == SOURCE_WIFI) {
-            menuCursor = 1; // Force to Source Select (second item) when in WiFi mode
-            numItems = 2; // Allow safe bounds containing index 1
+            numItems = 6;
+            if (menuCursor != 4 && menuCursor != 5) {
+                menuCursor = 5; // default to Power on WiFi mode
+            }
         }
         if (menuCursor >= numItems) {
             menuCursor = 0;
@@ -325,11 +333,16 @@ namespace ControlsManager {
         if (currentState == STATE_NAV) {
             // Handle menu navigation
             if (delta != 0) {
-                menuCursor += delta;
-                // Clamp menu cursor between 0 and numItems - 1
-                if (menuCursor < 0) menuCursor = numItems - 1;
-                if (menuCursor >= numItems) menuCursor = 0;
-                
+                if (LEDManager::getSource() != SOURCE_WIFI) {
+                    menuCursor += delta;
+                    if (menuCursor < 0) menuCursor = numItems - 1;
+                    if (menuCursor >= numItems) menuCursor = 0;
+                } else {
+                    // In WiFi mode, only allow toggling between 4 (Source) and 5 (Power)
+                    menuCursor += delta;
+                    if (menuCursor < 4) menuCursor = 5;
+                    if (menuCursor > 5) menuCursor = 4;
+                }
                 Serial.printf("[Controls] Menu cursor: %d\n", menuCursor);
             }
 
@@ -339,10 +352,11 @@ namespace ControlsManager {
                 // Initialize preview values when entering edit mode
                 switch (menuCursor) {
                     case 0: selectedModePreview = LEDManager::getActiveMode(); break;
-                    case 1: selectedSourcePreview = LEDManager::getSource(); break;
-                    case 2: selectedBrightnessPreview = LEDManager::getBrightness(); break;
-                    case 3: selectedGainPreview = activeGain; break;
-                    case 4: selectedAutoCyclePreview = LEDManager::getAutoCycle(); break;
+                    case 1: selectedAutoCyclePreview = LEDManager::getAutoCycle(); break;
+                    case 2: selectedGainPreview = activeGain; break;
+                    case 3: selectedBrightnessPreview = LEDManager::getBrightness(); break;
+                    case 4: selectedSourcePreview = LEDManager::getSource(); break;
+                    case 5: selectedSystemOnPreview = systemOn; break;
                 }
             }
         } else if (currentState == STATE_EDIT) {
@@ -359,16 +373,24 @@ namespace ControlsManager {
                         Serial.printf("[Controls] Mode preview changed to: %s\n", LEDManager::getModeName(selectedModePreview));
                         break;
                     }
-                    case 1: { // Source Selection
-                        SourceMode currentSrc = selectedSourcePreview;
-                        SourceMode nextSrc = (currentSrc == SOURCE_SOUND) ? SOURCE_WIFI : SOURCE_SOUND;
-                        selectedSourcePreview = nextSrc;
-                        Serial.printf("[Controls] Source preview changed to: %s\n", LEDManager::getSourceName(nextSrc));
+                    case 1: { // Auto-Cycle (Toggle)
+                        selectedAutoCyclePreview = !selectedAutoCyclePreview;
+                        Serial.printf("[Controls] Auto-Cycle preview changed to: %s\n", selectedAutoCyclePreview ? "ON" : "OFF");
                         break;
                     }
-                    case 2: { // Brightness (Step by 5%, 0% to 100%)
+                    case 2: { // Gain (Step by 0.1, 0.2 to 2.0)
+                        float g = selectedGainPreview;
+                        g -= delta * 0.1f;
+                        if (g < 0.2f) g = 0.2f;
+                        if (g > 2.0f) g = 2.0f;
+                        
+                        selectedGainPreview = g;
+                        Serial.printf("[Controls] Gain preview changed to: %.1f\n", g);
+                        break;
+                    }
+                    case 3: { // Brightness (Step by 5%, 0% to 100%)
                         int currentPct = (int)round((selectedBrightnessPreview * 100.0) / 255.0);
-                        int nextPct = currentPct + delta * 5;
+                        int nextPct = currentPct - delta * 5;
                         if (nextPct < 0) nextPct = 0;
                         if (nextPct > 100) nextPct = 100;
                         
@@ -377,19 +399,16 @@ namespace ControlsManager {
                         Serial.printf("[Controls] Brightness preview changed to: %d%% (%d/255)\n", nextPct, b);
                         break;
                     }
-                    case 3: { // Gain (Step by 0.2, 0.2 to 5.0)
-                        float g = selectedGainPreview;
-                        g += delta * 0.2f;
-                        if (g < 0.2f) g = 0.2f;
-                        if (g > 5.0f) g = 5.0f;
-                        
-                        selectedGainPreview = g;
-                        Serial.printf("[Controls] Gain preview changed to: %.1f\n", g);
+                    case 4: { // Source Selection
+                        SourceMode currentSrc = selectedSourcePreview;
+                        SourceMode nextSrc = (currentSrc == SOURCE_SOUND) ? SOURCE_WIFI : SOURCE_SOUND;
+                        selectedSourcePreview = nextSrc;
+                        Serial.printf("[Controls] Source preview changed to: %s\n", LEDManager::getSourceName(nextSrc));
                         break;
                     }
-                    case 4: { // Auto-Cycle (Toggle)
-                        selectedAutoCyclePreview = !selectedAutoCyclePreview;
-                        Serial.printf("[Controls] Auto-Cycle preview changed to: %s\n", selectedAutoCyclePreview ? "ON" : "OFF");
+                    case 5: { // Power Selection (Toggle)
+                        selectedSystemOnPreview = !selectedSystemOnPreview;
+                        Serial.printf("[Controls] Power preview changed to: %s\n", selectedSystemOnPreview ? "ON" : "OFF");
                         break;
                     }
                 }
@@ -405,16 +424,19 @@ namespace ControlsManager {
                         LEDManager::setMode(selectedModePreview);
                         break;
                     case 1:
-                        LEDManager::setSource(selectedSourcePreview);
+                        LEDManager::setAutoCycle(selectedAutoCyclePreview);
                         break;
                     case 2:
-                        LEDManager::setBrightness(selectedBrightnessPreview);
-                        break;
-                    case 3:
                         activeGain = selectedGainPreview;
                         break;
+                    case 3:
+                        LEDManager::setBrightness(selectedBrightnessPreview);
+                        break;
                     case 4:
-                        LEDManager::setAutoCycle(selectedAutoCyclePreview);
+                        LEDManager::setSource(selectedSourcePreview);
+                        break;
+                    case 5:
+                        systemOn = selectedSystemOnPreview;
                         break;
                 }
                 
@@ -451,31 +473,38 @@ namespace ControlsManager {
     }
 
     SourceMode getSourcePreview() {
-        if (currentState == STATE_EDIT && menuCursor == 1) {
+        if (currentState == STATE_EDIT && menuCursor == 4) {
             return selectedSourcePreview;
         }
         return LEDManager::getSource();
     }
 
     uint8_t getBrightnessPreview() {
-        if (currentState == STATE_EDIT && menuCursor == 2) {
+        if (currentState == STATE_EDIT && menuCursor == 3) {
             return selectedBrightnessPreview;
         }
         return LEDManager::getBrightness();
     }
 
     float getGainPreview() {
-        if (currentState == STATE_EDIT && menuCursor == 3) {
+        if (currentState == STATE_EDIT && menuCursor == 2) {
             return selectedGainPreview;
         }
         return activeGain;
     }
 
     bool getAutoCyclePreview() {
-        if (currentState == STATE_EDIT && menuCursor == 4) {
+        if (currentState == STATE_EDIT && menuCursor == 1) {
             return selectedAutoCyclePreview;
         }
         return LEDManager::getAutoCycle();
+    }
+
+    bool getSystemOnPreview() {
+        if (currentState == STATE_EDIT && menuCursor == 5) {
+            return selectedSystemOnPreview;
+        }
+        return systemOn;
     }
 
     bool fetchStateFromRemote() {
@@ -520,6 +549,9 @@ namespace ControlsManager {
                 if (doc.containsKey("autoCycle")) {
                     bool ac = doc["autoCycle"];
                     LEDManager::setAutoCycle(ac);
+                }
+                if (doc.containsKey("on")) {
+                    systemOn = doc["on"];
                 }
                 Serial.println("[Remote] Initial state fetched and applied successfully.");
                 success = true;

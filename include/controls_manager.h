@@ -30,6 +30,7 @@ namespace ControlsManager {
     uint8_t getBrightnessPreview();
     float getGainPreview();
     bool getAutoCyclePreview();
+    bool getSystemOnPreview();
 
     // Set local gain for settings synchronization
     void setGain(float gain);

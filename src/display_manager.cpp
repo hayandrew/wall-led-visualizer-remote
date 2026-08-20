@@ -157,13 +157,14 @@ namespace DisplayManager {
         display.setTextColor(SSD1306_WHITE);
         switch (cursor) {
             case 0: drawHeaderWithArrows("VISUALIZER", 5, !editing); break;
-            case 1: drawHeaderWithArrows("SOURCE", 5, !editing); break;
-            case 2: drawHeaderWithArrows("BRIGHTNESS", 5, !editing); break;
-            case 3: drawHeaderWithArrows("MIC GAIN", 5, !editing); break;
-            case 4: drawHeaderWithArrows("CYCLE", 5, !editing); break;
+            case 1: drawHeaderWithArrows("CYCLE", 5, !editing); break;
+            case 2: drawHeaderWithArrows("MIC GAIN", 5, !editing); break;
+            case 3: drawHeaderWithArrows("BRIGHTNESS", 5, !editing); break;
+            case 4: drawHeaderWithArrows("SOURCE", 5, !editing); break;
+            case 5: drawHeaderWithArrows("POWER", 5, !editing); break;
         }
         display.drawFastHLine(0, 9 + 20, 128, SSD1306_WHITE);
-
+ 
         // Render Focused Parameter Value or Progress Bar
         if (cursor == 0) {
             drawCenteredText(getShortModeName(ControlsManager::getVisualizerModePreview()), 31, 2);
@@ -172,12 +173,37 @@ namespace DisplayManager {
                 display.fillTriangle(124, 29 + 15, 124, 39 + 15, 118, 34 + 15, SSD1306_WHITE);
             }
         } else if (cursor == 1) {
-            drawCenteredText(LEDManager::getSourceName(ControlsManager::getSourcePreview()), 31, 2);
+            bool ac = ControlsManager::getAutoCyclePreview();
+            drawCenteredText(ac ? "ON" : "OFF", 31, 2);
             if (editing) {
                 display.fillTriangle(4, 29 + 15, 4, 39 + 15, 10, 34 + 15, SSD1306_WHITE);
                 display.fillTriangle(124, 29 + 15, 124, 39 + 15, 118, 34 + 15, SSD1306_WHITE);
             }
         } else if (cursor == 2) {
+            float g = ControlsManager::getGainPreview();
+            if (editing) {
+                // Draw progress bar for gain on the left (0.2x to 2.0x mapped to 0-80px)
+                float gainPct = ((g - 0.2f) / (2.0f - 0.2f)) * 100.0f;
+                int fillWidth = (int)((gainPct * 80.0f) / 100.0f);
+                if (fillWidth > 80) fillWidth = 80;
+                if (fillWidth < 0) fillWidth = 0;
+                
+                display.drawRect(8, 28 + 15, 80, 12, SSD1306_WHITE);
+                display.fillRect(8, 28 + 15, fillWidth, 12, SSD1306_WHITE);
+                
+                char buf[8];
+                sprintf(buf, "%.1fx", g);
+                int tx = 112 - (strlen(buf) * 3); // Center of right-hand column (x=96 to 127)
+                display.setTextColor(SSD1306_WHITE);
+                display.setTextSize(1);
+                display.setCursor(tx, 30 + 15);
+                display.print(buf);
+            } else {
+                char buf[8];
+                sprintf(buf, "%.1fx", g);
+                drawCenteredText(buf, 31, 2);
+            }
+        } else if (cursor == 3) {
             int pct = (int)round((ControlsManager::getBrightnessPreview() * 100.0) / 255.0);
             if (editing) {
                 // Draw progress bar on the left (80px wide, x=8 to 88)
@@ -200,33 +226,15 @@ namespace DisplayManager {
                 sprintf(buf, "%d%%", pct);
                 drawCenteredText(buf, 31, 2);
             }
-        } else if (cursor == 3) {
-            float g = ControlsManager::getGainPreview();
-            if (editing) {
-                // Draw progress bar for gain on the left (0.2x to 5.0x mapped to 0-80px)
-                float gainPct = ((g - 0.2f) / (5.0f - 0.2f)) * 100.0f;
-                int fillWidth = (int)((gainPct * 80.0f) / 100.0f);
-                if (fillWidth > 80) fillWidth = 80;
-                if (fillWidth < 0) fillWidth = 0;
-                
-                display.drawRect(8, 28 + 15, 80, 12, SSD1306_WHITE);
-                display.fillRect(8, 28 + 15, fillWidth, 12, SSD1306_WHITE);
-                
-                char buf[8];
-                sprintf(buf, "%.1fx", g);
-                int tx = 112 - (strlen(buf) * 3); // Center of right-hand column (x=96 to 127)
-                display.setTextColor(SSD1306_WHITE);
-                display.setTextSize(1);
-                display.setCursor(tx, 30 + 15);
-                display.print(buf);
-            } else {
-                char buf[8];
-                sprintf(buf, "%.1fx", g);
-                drawCenteredText(buf, 31, 2);
-            }
         } else if (cursor == 4) {
-            bool ac = ControlsManager::getAutoCyclePreview();
-            drawCenteredText(ac ? "ON" : "OFF", 31, 2);
+            drawCenteredText(LEDManager::getSourceName(ControlsManager::getSourcePreview()), 31, 2);
+            if (editing) {
+                display.fillTriangle(4, 29 + 15, 4, 39 + 15, 10, 34 + 15, SSD1306_WHITE);
+                display.fillTriangle(124, 29 + 15, 124, 39 + 15, 118, 34 + 15, SSD1306_WHITE);
+            }
+        } else if (cursor == 5) {
+            bool onState = ControlsManager::getSystemOnPreview();
+            drawCenteredText(onState ? "ON" : "OFF", 31, 2);
             if (editing) {
                 display.fillTriangle(4, 29 + 15, 4, 39 + 15, 10, 34 + 15, SSD1306_WHITE);
                 display.fillTriangle(124, 29 + 15, 124, 39 + 15, 118, 34 + 15, SSD1306_WHITE);
