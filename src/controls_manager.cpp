@@ -374,7 +374,11 @@ namespace ControlsManager {
                         break;
                     }
                     case 1: { // Auto-Cycle (Toggle)
-                        selectedAutoCyclePreview = !selectedAutoCyclePreview;
+                        if (delta > 0) {
+                            selectedAutoCyclePreview = true;
+                        } else if (delta < 0) {
+                            selectedAutoCyclePreview = false;
+                        }
                         Serial.printf("[Controls] Auto-Cycle preview changed to: %s\n", selectedAutoCyclePreview ? "ON" : "OFF");
                         break;
                     }
@@ -400,14 +404,20 @@ namespace ControlsManager {
                         break;
                     }
                     case 4: { // Source Selection
-                        SourceMode currentSrc = selectedSourcePreview;
-                        SourceMode nextSrc = (currentSrc == SOURCE_SOUND) ? SOURCE_WIFI : SOURCE_SOUND;
-                        selectedSourcePreview = nextSrc;
-                        Serial.printf("[Controls] Source preview changed to: %s\n", LEDManager::getSourceName(nextSrc));
+                        if (delta > 0) {
+                            selectedSourcePreview = SOURCE_WIFI;
+                        } else if (delta < 0) {
+                            selectedSourcePreview = SOURCE_SOUND;
+                        }
+                        Serial.printf("[Controls] Source preview changed to: %s\n", LEDManager::getSourceName(selectedSourcePreview));
                         break;
                     }
                     case 5: { // Power Selection (Toggle)
-                        selectedSystemOnPreview = !selectedSystemOnPreview;
+                        if (delta > 0) {
+                            selectedSystemOnPreview = true;
+                        } else if (delta < 0) {
+                            selectedSystemOnPreview = false;
+                        }
                         Serial.printf("[Controls] Power preview changed to: %s\n", selectedSystemOnPreview ? "ON" : "OFF");
                         break;
                     }
@@ -567,5 +577,9 @@ namespace ControlsManager {
 
     void setGain(float gain) {
         activeGain = gain;
+    }
+
+    void setSystemOn(bool on) {
+        systemOn = on;
     }
 }

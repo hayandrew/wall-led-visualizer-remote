@@ -198,6 +198,10 @@ void init() {
             bool ac = doc["autoCycle"];
             LEDManager::setAutoCycle(ac);
         }
+        if (doc.containsKey("on")) {
+            bool onVal = doc["on"];
+            ControlsManager::setSystemOn(onVal);
+        }
 
         server.send(200, "application/json", "{\"status\":\"success\"}");
         Serial.println("[Notification] Local state updated.");

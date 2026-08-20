@@ -34,6 +34,9 @@ namespace ControlsManager {
 
     // Set local gain for settings synchronization
     void setGain(float gain);
+
+    // Set local power state for settings synchronization
+    void setSystemOn(bool on);
 }
 
 #endif // CONTROLS_MANAGER_H
