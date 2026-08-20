@@ -334,7 +334,7 @@ namespace ControlsManager {
             // Handle menu navigation
             if (delta != 0) {
                 if (LEDManager::getSource() != SOURCE_WIFI) {
-                    menuCursor += delta;
+                    menuCursor -= delta;
                     if (menuCursor < 0) menuCursor = numItems - 1;
                     if (menuCursor >= numItems) menuCursor = 0;
                 } else {
